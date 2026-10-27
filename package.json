@@ -1,0 +1,16 @@
+{
+  "name": "exun-sentinel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Anomaly response platform for the Wenoti Arcade case",
+  "scripts": {
+    "dev": "node dev.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

@@ -221,3 +221,5 @@ const CV = (() => {
 
   return { analyze, sample };
 })();
+
+export default CV;
