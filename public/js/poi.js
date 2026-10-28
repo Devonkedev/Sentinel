@@ -39,3 +39,52 @@ export function matchPoi(description, x, y) {
   const level = score >= 60 ? "strong" : score >= 35 ? "possible" : "low";
   return { score, level, traits };
 }
+
+// Any video game character that seems to have left its game
+export const CHARACTER_TRAITS = [
+  ["Glitching, flickering or pixelated", 20, /glitch|flicker|pixel|8[- ]?bit|16[- ]?bit|low[- ]poly|jagged|blocky|lagg?(ed|ing)?\b/],
+  ["Costume or game gear", 12, /armou?r|sword|shield|helmet|cape|staff|wand|\bbow\b|gauntlet|tunic|power suit|blaster|potion/],
+  ["Impossible movement", 15, /jump(ed)? (really |very |super )?high|double jump|teleport|vanish|disappear|walked through|phas(ed|ing)|float|hover|super ?fast/],
+  ["Repeats lines or speaks oddly", 10, /repeat|same (line|phrase|thing)|catchphrase|robotic|monoton|accent|archaic/],
+  ["Unfamiliar with the real world", 10, /confused|didn.?t know|never seen|bare wrist|amazed by|scared of|afraid of/],
+  ["Near arcades or electronics", 10, /arcade|cabinet|game machine|console|screen|\btv\b|electronic/],
+  ["Power disturbance", 15, /spark|power (cut|surge|outage)|lights? (flicker|went out|dimmed)|static|\bhum|buzz|warbl|reverberat/],
+  ["Unreal colours or outline", 8, /neon|glow|outline|cel[- ]shad|cartoon|bright(ly)? colou?r/],
+];
+
+// Reports of an EXUN agent, or someone claiming to be one
+export const AGENT_TRAITS = [
+  ["Claimed to be an agent", 20, /exun|\bagent\b|etinuxe|intelligence agency|government|official/],
+  ["Showed a badge or ID", 15, /badge|id card|\bid\b|credentials|identification/],
+  ["Asked about the arcade or machine", 15, /arcade|wenoti|reckoning|machine|cabinet/],
+  ["Asked about POI-1", 15, /cosplay|armou?r|pointed ears|poi[- ]?1|knight/],
+  ["Surveillance behaviour", 15, /watching|taking notes|photograph|camera|earpiece|following|undercover|staking/],
+  ["Gave a name or codename", 10, /\bnano\b|\bmega\b|conis|nikrobo|name was|called (him|her|them)sel(f|ves)|codename/],
+];
+
+export const SUBJECTS = {
+  poi1: { label: "POI-1", traits: POI_TRAITS },
+  character: { label: "Video game character", traits: CHARACTER_TRAITS },
+  agent: { label: "EXUN agent", traits: AGENT_TRAITS },
+};
+
+function score(traitList, description) {
+  const text = String(description || "").toLowerCase();
+  const traits = [];
+  let total = 0;
+  for (const [label, weight, re] of traitList) {
+    if (re.test(text)) { traits.push(label); total += weight; }
+  }
+  return { score: Math.min(total, 100), traits };
+}
+
+// Scores a sighting against the profile for its subject.
+// Agent sightings get level "agent": they are logged for review, not ranked.
+export function scoreSighting(subject, description, x, y) {
+  if (subject === "agent") return { ...score(AGENT_TRAITS, description), level: "agent" };
+  if (subject === "character") {
+    const s = score(CHARACTER_TRAITS, description);
+    return { ...s, level: s.score >= 50 ? "strong" : s.score >= 25 ? "possible" : "low" };
+  }
+  return matchPoi(description, x, y);
+}

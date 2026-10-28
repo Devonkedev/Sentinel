@@ -1,6 +1,6 @@
 // EXUN Sentinel frontend (vanilla ES modules, no build step)
 import { icon } from "./icons.js";
-import { PLACES, POI_TRAITS, matchPoi } from "./poi.js";
+import { PLACES, POI_TRAITS, SUBJECTS, scoreSighting } from "./poi.js";
 import CV from "./cv.js";
 
 const CASE = {
@@ -14,7 +14,7 @@ const CASE = {
   ],
 };
 
-const S = { token: null, user: null, alerts: [], route: null, poll: null };
+const S = { token: null, user: null, alerts: [], comms: null, route: null, poll: null, viewTimer: null, pendingRef: null, flash: null };
 
 // ================================================================ utilities
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -48,7 +48,14 @@ function ago(s) {
 const initials = name => name.replace(/^Agent\s+/, "").split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
 const SEV = { critical: "var(--critical)", high: "var(--serious)", medium: "var(--warning)", low: "var(--ink-3)", none: "var(--ink-3)", good: "var(--good)" };
 const pill = (level, text) => `<span class="pill ${esc(level)}">${esc(text ?? level)}</span>`;
-const levelSev = l => (l === "strong" ? "critical" : l === "possible" ? "medium" : "low");
+const levelSev = l => (l === "strong" ? "critical" : l === "possible" ? "medium" : l === "agent" ? "info" : "low");
+const subjectOf = s => s.subject || "poi1";
+const SUBJECT_UI = {
+  poi1: { icon: "target", label: "POI-1", tag: "POI-1" },
+  character: { icon: "gamepad", label: "Video game character", tag: "Character" },
+  agent: { icon: "badge", label: "EXUN agent", tag: "Agent" },
+};
+const dmId = (a, b) => "dm-" + [a, b].sort().join("-");
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -109,6 +116,15 @@ function setTheme(t) {
   $$("[data-theme-toggle]").forEach(b => (b.innerHTML = icon(t === "dark" ? "sun" : "moon")));
 }
 const themeBtn = (cls = "btn ghost icon") => `<button class="${cls}" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">${icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")}</button>`;
+// "Discuss" buttons attach a piece of evidence to a new comms message
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-discuss]");
+  if (!b) return;
+  S.pendingRef = JSON.parse(b.dataset.discuss);
+  location.hash = "comms/" + (b.dataset.conv || "wenoti");
+});
+const discussBtn = (ref, conv = "wenoti") => `<button class="btn sm ghost" data-discuss='${esc(JSON.stringify(ref))}' data-conv="${conv}">${icon("message")}Discuss</button>`;
+
 document.addEventListener("click", e => {
   if (e.target.closest("[data-theme-toggle]")) setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
@@ -124,13 +140,20 @@ const SHORT = { "etiNuxe Intelligence Agency HQ": "EIA HQ", "Department of Elect
 function mapSVG({ sightings = [], agents = [], pick = null, id = "map" }) {
   const places = Object.entries(PLACES).map(([name, [x, y]]) =>
     `<g><rect x="${x - 1}" y="${y - 1}" width="2" height="2" rx=".4" style="fill:var(--map-place)" opacity=".6"/>
-      <text x="${x}" y="${y + 3.6}" font-size="2.1" text-anchor="middle" style="fill:var(--map-place)">${esc(SHORT[name] || name.split(",")[0])}</text><title>${esc(name)}</title></g>`).join("");
+      <text x="${name.startsWith("Wenoti") ? x + 2.6 : x}" y="${name.startsWith("Wenoti") ? y - 1.4 : y + 3.6}" font-size="2.1" text-anchor="${name.startsWith("Wenoti") ? "start" : "middle"}" style="fill:var(--map-place)">${esc(SHORT[name] || name.split(",")[0])}</text><title>${esc(name)}</title></g>`).join("");
   const color = { strong: "var(--critical)", possible: "var(--warning)", low: "var(--ink-3)" };
   const recent = s => Date.now() - (toDate(s.seen_at) || 0) < 72 * 3600e3;
+  color.agent = "var(--change)";
+  const shape = s => {
+    const c = `class="pin" data-id="${s.id}" style="fill:${color[s.match_level] || color.low};stroke:var(--map-bg)" stroke-width=".6" opacity="${s.status === "dismissed" ? .35 : 1}"`;
+    const t = `<title>${esc(SUBJECT_UI[subjectOf(s)].tag)} · ${esc(s.location)} · ${when(s.seen_at)}</title>`;
+    if (subjectOf(s) === "character") return `<rect ${c} x="${s.x - 1.7}" y="${s.y - 1.7}" width="3.4" height="3.4" rx=".5">${t}</rect>`;
+    if (subjectOf(s) === "agent") return `<path ${c} d="M${s.x} ${s.y - 2.1} L${s.x + 2} ${s.y + 1.6} L${s.x - 2} ${s.y + 1.6} Z">${t}</path>`;
+    return `<circle ${c} cx="${s.x}" cy="${s.y}" r="1.8">${t}</circle>`;
+  };
   const pins = sightings.filter(s => s.x != null).map(s => `<g>
     ${s.match_level === "strong" && s.status !== "dismissed" && recent(s) ? `<circle class="pulse" cx="${s.x}" cy="${s.y}" r="1.8" style="fill:${color.strong}"/>` : ""}
-    <circle class="pin" data-id="${s.id}" cx="${s.x}" cy="${s.y}" r="1.8" style="fill:${color[s.match_level]};stroke:var(--map-bg)" stroke-width=".6" opacity="${s.status === "dismissed" ? .35 : 1}">
-      <title>${esc(s.location)} · match ${s.match_score} · ${when(s.seen_at)}</title></circle></g>`).join("");
+    ${shape(s)}</g>`).join("");
   const seen = {};
   const ags = agents.map(a0 => {
     const k = a0.x + "," + a0.y, n = (seen[k] = (seen[k] || 0) + 1) - 1;
@@ -167,11 +190,13 @@ function nearestPlace(x, y) {
   return bd < 6 ? best : `Near ${best.split(",")[0]}`;
 }
 
-const mapLegend = (agents = false) => `<div class="legend">
+const mapLegend = (agents = false, subjects = false) => `<div class="legend">
   <span><i class="sw" style="background:var(--critical)"></i>Strong match</span>
   <span><i class="sw" style="background:var(--warning)"></i>Possible</span>
   <span><i class="sw" style="background:var(--ink-3)"></i>Low</span>
-  ${agents ? `<span><i class="sw dia" style="background:var(--accent)"></i>Agent</span>` : ""}</div>`;
+  ${subjects ? `<span><i class="sw" style="background:var(--ink-2)"></i>POI-1</span><span><i class="sw sq" style="background:var(--ink-2)"></i>Other character</span>
+    ${S.user?.role === "agent" ? `<span><i class="sw tri"></i>Agent sighting</span>` : ""}` : ""}
+  ${agents ? `<span><i class="sw dia" style="background:var(--accent)"></i>Agent position</span>` : ""}</div>`;
 
 // ================================================================ energy chart
 function energyChart(rows, spikes, log) {
@@ -234,6 +259,7 @@ async function renderLanding(mode = "login", role = "citizen") {
         <span class="badge"><span class="live"></span>Public appeal</span>
         <h1>Have you seen this person?</h1>
         <p class="lead">Since 23 October, a person in costume has been linked to unexplained power surges at Wenoti Arcade on 92nd Avenue. If you see someone matching this description, report it. Every report is reviewed by an agent.</p>
+        <p class="ink2" style="margin-top:-2px">Seen <b>another video game character</b> out in the real world, or someone claiming to be an <b>EXUN agent</b>? Report that too.</p>
         <div class="look">
           <div>${icon("ear")}Sharp, pointed ears</div><div>${icon("shield")}Bedazzled armour</div>
           <div>${icon("sword")}Scabbard at the waist</div><div>${icon("hand")}Leather gloves and boots</div>
@@ -292,6 +318,7 @@ async function renderLanding(mode = "login", role = "citizen") {
     const s = await api("/api/public/summary");
     $("#hstats").innerHTML = `<div><div class="v">${s.sightings}</div><div class="k">Reports filed</div></div>
       <div><div class="v">${s.strong}</div><div class="k">Strong matches</div></div>
+      <div><div class="v">${s.characters || 0}</div><div class="k">Other characters</div></div>
       ${s.latest ? `<div><div class="v" style="font-size:16px;line-height:1.9">${esc(s.latest.location.split(",")[0])}</div><div class="k">Last seen ${ago(s.latest.seen_at)}</div></div>` : ""}`;
   } catch { /* stats are optional */ }
 }
@@ -306,7 +333,8 @@ async function signIn(path, body) {
 }
 
 function signOut() {
-  S.token = null; S.user = null; S.alerts = [];
+  S.token = null; S.user = null; S.alerts = []; S.comms = null;
+  clearInterval(S.viewTimer);
   store.set("exun_token", null);
   clearInterval(S.poll);
   history.replaceState(null, "", location.pathname);
@@ -316,6 +344,7 @@ function signOut() {
 // ================================================================ shell & routing
 const ROUTES = {
   dashboard: { title: "Case dashboard", icon: "grid", roles: ["agent"], sec: "Command" },
+  comms: { title: "Comms", icon: "message", roles: ["agent"], sec: "Command" },
   alerts: { title: "Alerts", icon: "bell", roles: ["agent"], sec: "Command" },
   energy: { title: "Energy spikes", icon: "zap", roles: ["agent"], sec: "Forensics" },
   code: { title: "Code forensics", icon: "code", roles: ["agent"], sec: "Forensics" },
@@ -333,7 +362,7 @@ function renderShell() {
     const sec = typeof r.sec === "string" ? r.sec : r.sec[role];
     const h = sec !== lastSec ? `<div class="sec">${sec}</div>` : "";
     lastSec = sec;
-    return `${h}<a href="#${id}" data-route="${id}">${icon(r.icon)}<span>${r.title}</span>${id === "alerts" ? `<span class="count hidden" id="acount"></span>` : ""}</a>`;
+    return `${h}<a href="#${id}" data-route="${id}">${icon(r.icon)}<span>${r.title}</span>${id === "alerts" ? `<span class="count hidden" id="acount"></span>` : id === "comms" ? `<span class="count hidden" id="ccount"></span>` : ""}</a>`;
   }).join("");
   const brand = `<a class="brand" href="#"><span class="brand-mark">${icon("shield")}</span><span><div class="brand-name">EXUN Sentinel</div>
     <div class="brand-sub">${role === "agent" ? "Agent console" : "Citizen portal"}</div></span></a>`;
@@ -354,10 +383,32 @@ function renderShell() {
 
 function updateBadge() {
   const el = $("#acount");
-  if (!el) return;
-  const n = S.alerts.filter(a => a.status === "open").length;
-  el.textContent = n;
-  el.classList.toggle("hidden", !n);
+  if (el) {
+    const n = S.alerts.filter(a => a.status === "open").length;
+    el.textContent = n;
+    el.classList.toggle("hidden", !n);
+  }
+  const c = $("#ccount");
+  if (c && S.comms) {
+    const all = [...S.comms.channels, ...S.comms.dms];
+    const n = all.reduce((t, x) => t + x.unread, 0), m = all.reduce((t, x) => t + x.mentions, 0);
+    c.textContent = m ? "@" + m : n;
+    c.classList.toggle("hidden", !n);
+    c.style.background = m ? "var(--warning)" : "var(--accent)";
+  }
+}
+
+async function refreshComms(notify) {
+  if (S.user?.role !== "agent") return;
+  const before = S.comms;
+  try { S.comms = await api("/api/comms"); } catch { return; }
+  if (notify && before && S.route !== "comms") {
+    const prev = Object.fromEntries([...before.channels, ...before.dms].map(x => [x.id, x.mentions]));
+    for (const x of [...S.comms.channels, ...S.comms.dms]) {
+      if (x.mentions > (prev[x.id] || 0) && x.last) toast(`${x.last.from_name} mentioned you`, { type: "info", sub: `${x.kind === "dm" ? "Direct message" : "#" + x.name}: ${x.last.text}` });
+    }
+  }
+  updateBadge();
 }
 
 async function refreshAlerts(notify) {
@@ -374,9 +425,10 @@ async function refreshAlerts(notify) {
 async function navigate() {
   if (!S.user) return;
   const allowed = routesFor(S.user.role).map(([id]) => id);
-  let id = location.hash.slice(1);
+  let [id, param] = location.hash.slice(1).split("/");
   if (!allowed.includes(id)) id = allowed[0];
   S.route = id;
+  clearInterval(S.viewTimer);
   $$("[data-route]").forEach(a => (a.getAttribute("data-route") === id ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $("#shell")?.classList.remove("open");
   document.title = `${ROUTES[id].title} · EXUN Sentinel`;
@@ -387,7 +439,7 @@ async function navigate() {
   try {
     const wrap = document.createElement("div");
     wrap.className = "view-enter";
-    await VIEWS[id](wrap);
+    await VIEWS[id](wrap, param ? decodeURIComponent(param) : null);
     if (S.route !== id) return;
     main.replaceChildren(wrap);
     window.scrollTo(0, 0);
@@ -403,9 +455,9 @@ async function boot() {
   if (!S.user && S.token) { try { S.user = await api("/api/me"); } catch { S.token = null; store.set("exun_token", null); } }
   if (!S.user) return renderLanding();
   renderShell();
-  await refreshAlerts(false);
+  await Promise.all([refreshAlerts(false), refreshComms(false)]);
   clearInterval(S.poll);
-  if (S.user.role === "agent") S.poll = setInterval(() => refreshAlerts(true), 30000);
+  if (S.user.role === "agent") S.poll = setInterval(() => { refreshAlerts(true); refreshComms(true); }, 20000);
   navigate();
 }
 
@@ -413,12 +465,13 @@ async function boot() {
 const VIEWS = {};
 
 VIEWS.dashboard = async el => {
-  const [c, sightings, agents, integrity, energy, code] = await Promise.all(
-    ["/api/correlate", "/api/sightings", "/api/agents", "/api/integrity", "/api/energy", "/api/code"].map(p => api(p)));
+  const [c, sightings, agents, integrity, energy, code, wenoti] = await Promise.all(
+    ["/api/correlate", "/api/sightings", "/api/agents", "/api/integrity", "/api/energy", "/api/code", "/api/comms/wenoti"].map(p => api(p)));
   await refreshAlerts(false);
   const color = c.score >= 70 ? "var(--critical)" : c.score >= 40 ? "var(--warning)" : "var(--good)";
   const open = S.alerts.filter(a => a.status === "open");
-  const strong = sightings.filter(s => s.match_level === "strong" && s.status !== "dismissed");
+  const strong = sightings.filter(s => s.status !== "dismissed" && ((subjectOf(s) === "poi1" && s.match_level === "strong") || s.also_poi1));
+  const chars = sightings.filter(s => subjectOf(s) === "character" && s.status !== "dismissed");
   const escalated = S.alerts.some(a => a.source === "Correlation engine");
   const steps = [
     ["energy", "Analyse the energy readings", energy.length > 0],
@@ -434,7 +487,7 @@ VIEWS.dashboard = async el => {
     ${head("Wenoti Arcade", `The Reckoning V: Origins · machine <span class="mono">${CASE.machineId}</span> · 92nd Avenue, nuxEland`, { eyebrow: "Active case" })}
     <div class="grid g4">
       ${[["bell", "Open alerts", open.length, `${open.filter(a => a.severity === "critical").length} critical`, "#alerts"],
-         ["target", "Strong POI-1 matches", strong.length, `${sightings.length} sightings total`, "#sightings"],
+         ["target", "Strong POI-1 matches", strong.length, `${chars.length} other character report${chars.length === 1 ? "" : "s"}`, "#sightings"],
          ["users", "Agents in the field", `${agents.filter(a => !/relocat|off/i.test(a.status)).length}<span class="muted" style="font-size:18px">/${agents.length}</span>`, `${agents.filter(a => /relocat/i.test(a.status)).length} relocation pending`, "#agents"],
          ["scan", "Latest inspection", integrity[0] ? integrity[0].score : "—", integrity[0] ? `${integrity[0].condition} surface damage` : "No inspection yet", "#integrity"]]
         .map(([ic, k, v, d, href]) => `<a class="card stat" href="${href}" style="color:inherit;text-decoration:none"><div class="k">${icon(ic)}${k}</div><div class="v">${v}</div><div class="d">${d}</div></a>`).join("")}
@@ -465,8 +518,15 @@ VIEWS.dashboard = async el => {
           : empty("clock", "No events yet", "Run the energy and code analyses to build the timeline.")}
       </div>
     </div>
-    <div class="card" style="margin-top:16px"><div class="card-head"><h2>${icon("bell")}Open alerts</h2><a class="btn sm ghost" href="#alerts">View all${icon("arrow")}</a></div>
-      <div class="list">${open.slice(0, 3).map(alertItem).join("") || empty("checkCircle", "All clear", "No open alerts right now.")}</div></div>`;
+    <div class="grid g-side" style="margin-top:16px">
+      <div class="card"><div class="card-head"><h2>${icon("bell")}Open alerts</h2><a class="btn sm ghost" href="#alerts">View all${icon("arrow")}</a></div>
+        <div class="list">${open.slice(0, 3).map(alertItem).join("") || empty("checkCircle", "All clear", "No open alerts right now.")}</div></div>
+      <div class="card"><div class="card-head"><div><h2>${icon("message")}#wenoti-case</h2><div class="sub">Latest from the case channel</div></div><a class="btn sm ghost" href="#comms/wenoti">Open${icon("arrow")}</a></div>
+        <div class="mini-msgs">${wenoti.messages.slice(-4).map(m => `<div class="mini-msg ${m.urgent ? "urgent" : ""}"><span class="avatar sm">${initials(m.from_name)}</span>
+          <div><div class="small"><b>${esc(m.from_name)}</b> <span class="muted">${ago(m.time)}</span></div><div class="ink2 small">${renderText(m.text)}</div></div></div>`).join("")
+          || empty("message", "No messages yet", "Start the conversation in Comms.")}</div>
+        <a class="btn block" href="#comms/wenoti" style="margin-top:12px">${icon("message")}Reply in Comms</a></div>
+    </div>`;
 
   const doEscalate = async btn => {
     const ok = await confirmDialog({
@@ -491,8 +551,9 @@ function alertItem(a) {
       ${a.repeats ? `<span class="tag">×${a.repeats}</span>` : ""}${a.status !== "open" ? `<span class="tag">${icon("check")}${esc(a.status)}${a.handled_by ? " by " + esc(a.handled_by) : ""}</span>` : ""}</div>
     <div class="title">${esc(a.title)}</div><div class="body">${esc(a.body)}</div>
     <div class="tags" style="margin-top:10px">${(a.recipients || []).map(r => `<span class="tag">${icon("send")}${esc(r)}</span>`).join("")}</div>
-    ${a.status === "open" ? `<div class="actions"><button class="btn sm" data-ack="${a.id}">${icon("check")}Acknowledge</button><button class="btn sm ghost" data-res="${a.id}">Resolve</button></div>`
-      : a.status === "acknowledged" ? `<div class="actions"><button class="btn sm ghost" data-res="${a.id}">Resolve</button></div>` : ""}</div>`;
+    <div class="actions">${a.status === "open" ? `<button class="btn sm" data-ack="${a.id}">${icon("check")}Acknowledge</button>` : ""}
+      ${a.status !== "resolved" ? `<button class="btn sm ghost" data-res="${a.id}">Resolve</button>` : ""}
+      ${discussBtn({ type: "alert", id: a.id, label: a.title }, a.source === "Sightings" ? "sightings" : a.source === "Comms" ? "field" : "wenoti")}</div></div>`;
 }
 
 function bindAlertButtons(root) {
@@ -528,6 +589,221 @@ VIEWS.alerts = async el => {
     </table></div></div></div></div>`;
   $$("[data-f]", el).forEach(b => (b.onclick = () => { filters.alerts = b.dataset.f; rerender(); }));
   bindAlertButtons(el);
+};
+
+// ---------------------------------------------------------------- comms
+const REF_ROUTES = { alert: "alerts", sighting: "sightings", energy: "energy", code: "code", agent: "agents" };
+const REF_ICONS = { alert: "bell", sighting: "pin", energy: "zap", code: "code", agent: "users" };
+
+function renderText(text) {
+  const known = new Set([S.user.username, ...(S.comms?.dms || []).map(x => x.with)]);
+  return esc(text).replace(/@([a-z0-9_]+)/gi, (m, u) => known.has(u.toLowerCase())
+    ? `<span class="mention ${u.toLowerCase() === S.user.username ? "me" : ""}">@${esc(u)}</span>` : m);
+}
+
+const dayLabel = t => {
+  const d = toDate(t), today = new Date(), y = new Date(Date.now() - 86400e3);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  return same(d, today) ? "Today" : same(d, y) ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" });
+};
+
+function messageHTML(m, prev) {
+  const cont = prev && prev.from === m.from && !m.urgent && toDate(m.time) - toDate(prev.time) < 5 * 60e3 && dayLabel(prev.time) === dayLabel(m.time);
+  const time = toDate(m.time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return `${!prev || dayLabel(prev.time) !== dayLabel(m.time) ? `<div class="day-sep"><span>${dayLabel(m.time)}</span></div>` : ""}
+  <div class="msg ${cont ? "cont" : ""} ${m.urgent ? "urgent" : ""} ${m.from === S.user.username ? "mine" : ""}" id="m-${m.id}">
+    <span class="avatar">${cont ? "" : initials(m.from_name)}</span>
+    <div class="mb">${cont ? "" : `<div class="mh"><span class="who">${esc(m.from_name)}</span><span class="tm" title="${esc(when(m.time))}">${time}</span>
+      ${m.urgent ? `<span class="pill critical">Urgent</span>` : ""}${m.pinned ? `<span class="pin-tag">${icon("bookmark")}Pinned</span>` : ""}</div>`}
+      <div class="txt">${renderText(m.text)}</div>
+      ${m.ref ? `<a class="ref-card" href="#${REF_ROUTES[m.ref.type]}" data-ref='${esc(JSON.stringify(m.ref))}'>${icon(REF_ICONS[m.ref.type])}<span>${esc(m.ref.label || m.ref.type)}</span>${icon("arrow")}</a>` : ""}
+    </div>
+    <div class="tools"><button class="btn sm ghost icon" data-pin="${m.id}" title="${m.pinned ? "Unpin" : "Pin"}" aria-label="${m.pinned ? "Unpin message" : "Pin message"}">${icon("bookmark")}</button></div>
+  </div>`;
+}
+
+VIEWS.comms = async (el, param) => {
+  const [overview, sightings] = await Promise.all([api("/api/comms"), api("/api/sightings")]);
+  S.comms = overview;
+  updateBadge();
+  const convs = () => [...S.comms.channels, ...S.comms.dms];
+  if (param && !convs().some(c => c.id === param)) { toast("Conversation not found", { type: "err" }); param = null; }
+  const st = { id: param || "wenoti", messages: [], last: null, sending: false };
+  el.classList.add("comms-page");
+
+  el.innerHTML = head("Comms", "Coordinate with other agents. Share evidence, mention teammates with @username, and flag anything urgent.", { eyebrow: "Command" }) + `
+    <div class="comms ${param ? "thread-open" : ""}" id="comms">
+      <aside class="comms-list" id="clist" aria-label="Conversations"></aside>
+      <section class="thread" id="thread" aria-live="polite"></section>
+    </div>`;
+  const root = $("#comms", el);
+
+  const listHTML = () => {
+    const item = c => `<a href="#comms/${c.id}" data-conv="${c.id}" class="conv ${c.id === st.id ? "on" : ""} ${c.unread ? "has-unread" : ""}">
+      ${c.kind === "dm" ? `<span class="avatar sm">${initials(c.name)}<i class="presence ${c.online ? "on" : ""}"></i></span>` : `<span class="hash">${icon("hash")}</span>`}
+      <span class="cv"><span class="nm">${esc(c.kind === "dm" ? c.name : c.name)}</span>
+        <span class="pv">${c.last ? esc((c.kind === "dm" ? "" : c.last.from_name.replace(/^Agent\s+/, "").split(" ")[0] + ": ") + c.last.text) : c.kind === "dm" ? esc(c.status || "Say hello") : esc(c.topic)}</span></span>
+      ${c.mentions ? `<span class="badge-n at">@${c.mentions}</span>` : c.unread ? `<span class="badge-n">${c.unread}</span>` : ""}</a>`;
+    const onlineCount = S.comms.online.length;
+    return `<div class="sec">Channels</div>${S.comms.channels.map(item).join("")}
+      <div class="sec">Direct messages <span class="muted" style="text-transform:none;letter-spacing:0;font-weight:500">· ${onlineCount} online</span></div>
+      ${S.comms.dms.map(item).join("") || `<div class="hint" style="padding:0 10px">No other agents yet.</div>`}`;
+  };
+  const drawList = () => { $("#clist", root).innerHTML = listHTML(); };
+
+  const conv = () => convs().find(c => c.id === st.id);
+  const attachOptions = () => {
+    const open = S.alerts.filter(a => a.status !== "resolved").slice(0, 8);
+    const recent = sightings.slice(0, 8);
+    return `<option value="">Attach evidence…</option>
+      ${open.length ? `<optgroup label="Alerts">${open.map(a => `<option value='${esc(JSON.stringify({ type: "alert", id: a.id, label: a.title }))}'>${esc(a.title.slice(0, 70))}</option>`).join("")}</optgroup>` : ""}
+      ${recent.length ? `<optgroup label="Sightings">${recent.map(x => `<option value='${esc(JSON.stringify({ type: "sighting", id: x.id, label: `${SUBJECT_UI[subjectOf(x)].tag} sighting at ${x.location}` }))}'>${esc(SUBJECT_UI[subjectOf(x)].tag)} · ${esc(x.location)} · ${esc(when(x.seen_at))}</option>`).join("")}</optgroup>` : ""}
+      <optgroup label="Analyses"><option value='${esc(JSON.stringify({ type: "energy", id: "latest", label: "Latest energy spike analysis" }))}'>Latest energy analysis</option>
+      <option value='${esc(JSON.stringify({ type: "code", id: "latest", label: "Latest code forensics report" }))}'>Latest code forensics</option></optgroup>`;
+  };
+
+  const drawThread = data => {
+    const c = conv();
+    const mentionable = S.comms.dms.map(x => x.with);
+    $("#thread", root).innerHTML = `
+      <header class="thread-head">
+        <button class="btn ghost icon back" id="cback" aria-label="Back to conversations">${icon("back")}</button>
+        ${c.kind === "dm" ? `<span class="avatar">${initials(c.name)}<i class="presence ${c.online ? "on" : ""}"></i></span>` : `<span class="hash lg">${icon("hash")}</span>`}
+        <div style="min-width:0;flex:1"><h2>${esc(c.name)}</h2><div class="sub">${c.kind === "dm" ? `${c.online ? "Online" : "Offline"} · ${esc(c.status || "")}` : esc(c.topic)}</div></div>
+        ${data.pinned.length ? `<button class="btn sm ghost" id="pintoggle">${icon("bookmark")}${data.pinned.length} pinned</button>` : ""}
+      </header>
+      <div class="pinned hidden" id="pinned">${data.pinned.map(m => `<a href="#" data-jump="${m.id}"><b>${esc(m.from_name)}:</b> ${esc(m.text.slice(0, 140))}</a>`).join("")}</div>
+      <div class="msgs" id="msgs"></div>
+      <form class="composer" id="composer">
+        <div id="refchip"></div>
+        <textarea id="ctext" rows="1" placeholder="Message ${c.kind === "dm" ? esc(c.name) : "#" + esc(c.name)}" aria-label="Message"></textarea>
+        <div class="bar">
+          <select id="attach" class="btn sm ghost" aria-label="Attach evidence" style="width:auto;max-width:200px;height:30px;padding:0 8px">${attachOptions()}</select>
+          <button type="button" class="btn sm ghost" id="urgent" aria-pressed="false" title="Urgent messages alert every field agent">${icon("siren")}Urgent</button>
+          <span class="hint mention-hint">${mentionable.length ? "Mention: " + mentionable.map(u => `<button type="button" class="linkish" data-mention="${u}">@${u}</button>`).join(" ") : ""}</span>
+          <span style="flex:1"></span>
+          <span class="hint kbd-hint">Enter to send · Shift+Enter for a new line</span>
+          <button class="btn primary sm" id="csend">${icon("send")}Send</button>
+        </div>
+      </form>`;
+    st.messages = data.messages;
+    st.last = data.messages.at(-1)?.time || null;
+    $("#msgs", root).innerHTML = data.messages.length
+      ? data.messages.map((m, i) => messageHTML(m, data.messages[i - 1])).join("")
+      : empty(c.kind === "dm" ? "message" : "hash", "No messages yet", c.kind === "dm" ? `Start a private conversation with ${esc(c.name)}.` : "Be the first to post in this channel.");
+    scrollBottom(true);
+    bindThread();
+  };
+
+  const scrollBottom = force => {
+    const box = $("#msgs", root);
+    if (force || box.scrollHeight - box.scrollTop - box.clientHeight < 120) box.scrollTop = box.scrollHeight;
+  };
+
+  const append = msgs => {
+    if (!msgs.length) return;
+    const box = $("#msgs", root);
+    if (!st.messages.length) box.innerHTML = "";
+    for (const m of msgs) {
+      if (st.messages.some(x => x.id === m.id)) continue;
+      box.insertAdjacentHTML("beforeend", messageHTML(m, st.messages.at(-1)));
+      st.messages.push(m);
+    }
+    st.last = st.messages.at(-1)?.time || st.last;
+    scrollBottom(false);
+  };
+
+  const refChip = () => {
+    $("#refchip", root).innerHTML = S.pendingRef ? `<div class="ref-chip">${icon(REF_ICONS[S.pendingRef.type] || "paperclip")}<span>${esc(S.pendingRef.label)}</span>
+      <button type="button" class="btn ghost icon sm" id="refx" aria-label="Remove attachment">${icon("x")}</button></div>` : "";
+    const x = $("#refx", root);
+    if (x) x.onclick = () => { S.pendingRef = null; refChip(); };
+  };
+
+  const bindThread = () => {
+    const ta = $("#ctext", root), urgent = $("#urgent", root);
+    refChip();
+    const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight) + "px"; };
+    ta.oninput = grow;
+    ta.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("#composer", root).requestSubmit(); } };
+    urgent.onclick = () => { const on = urgent.getAttribute("aria-pressed") !== "true"; urgent.setAttribute("aria-pressed", on); urgent.classList.toggle("danger", on); };
+    $("#attach", root).onchange = e => { if (e.target.value) { S.pendingRef = JSON.parse(e.target.value); refChip(); e.target.value = ""; ta.focus(); } };
+    $$("[data-mention]", root).forEach(b => (b.onclick = () => { ta.value += (ta.value && !/\s$/.test(ta.value) ? " " : "") + "@" + b.dataset.mention + " "; ta.focus(); grow(); }));
+    $("#cback", root).onclick = () => { root.classList.remove("thread-open"); history.replaceState(null, "", "#comms"); };
+    const pt = $("#pintoggle", root);
+    if (pt) pt.onclick = () => $("#pinned", root).classList.toggle("hidden");
+    $$("[data-jump]", root).forEach(a => (a.onclick = e => {
+      e.preventDefault();
+      const m = $("#m-" + a.dataset.jump, root);
+      if (m) { m.scrollIntoView({ behavior: "smooth", block: "center" }); m.classList.add("flash"); setTimeout(() => m.classList.remove("flash"), 1600); }
+    }));
+    $("#composer", root).onsubmit = e => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      if (!text || st.sending) return;
+      st.sending = true;
+      const isUrgent = urgent.getAttribute("aria-pressed") === "true";
+      return busy($("#csend", root), async () => {
+        const m = await api(`/api/comms/${st.id}`, { text, ref: S.pendingRef, urgent: isUrgent });
+        ta.value = ""; grow();
+        S.pendingRef = null; refChip();
+        if (isUrgent) { urgent.click(); toast("Urgent message sent", { sub: "Every field agent has been alerted" }); }
+        append([m]);
+        scrollBottom(true);
+      }).finally(() => { st.sending = false; });
+    };
+    ta.focus({ preventScroll: true });
+  };
+
+  // Delegated: pin buttons and evidence links inside the thread
+  root.addEventListener("click", e => {
+    const p = e.target.closest("[data-pin]");
+    if (p) return busy(p, async () => {
+      const m = await api(`/api/comms/${st.id}/pin/${p.dataset.pin}`, {});
+      toast(m.pinned ? "Message pinned" : "Message unpinned");
+      await open(st.id);
+    });
+    const r = e.target.closest("[data-ref]");
+    if (r) { const ref = JSON.parse(r.dataset.ref); if (ref.type === "sighting") S.flash = ref.id; }
+    const c = e.target.closest("[data-conv]");
+    if (c) { e.preventDefault(); history.replaceState(null, "", "#comms/" + c.dataset.conv); root.classList.add("thread-open"); open(c.dataset.conv); }
+  });
+
+  const markRead = async id => {
+    try { await api(`/api/comms/${id}/read`, {}); } catch { return; }
+    const c = convs().find(x => x.id === id);
+    if (c) { c.unread = 0; c.mentions = 0; }
+    updateBadge();
+    drawList();
+  };
+
+  async function open(id) {
+    st.id = id;
+    drawList();
+    $("#thread", root).innerHTML = `<div class="skeleton" style="height:100%;border-radius:0"></div>`;
+    const data = await api(`/api/comms/${id}`);
+    if (st.id !== id) return;
+    drawThread(data);
+    markRead(id);
+  }
+
+  // On phones the list shows first; don't open (and mark read) a conversation the user hasn't picked
+  if (param || !matchMedia("(max-width: 820px)").matches) await open(st.id);
+  else { st.id = null; drawList(); }
+
+  // Poll for new messages and conversation updates while this view is open
+  S.viewTimer = setInterval(async () => {
+    if (S.route !== "comms" || document.hidden) return;
+    try {
+      const id = st.id;
+      const [data, ov] = await Promise.all([id ? api(`/api/comms/${id}` + (st.last ? `?after=${encodeURIComponent(st.last)}` : "")) : { messages: [] }, api("/api/comms")]);
+      S.comms = ov;
+      if (id && st.id === id && data.messages.length) { append(data.messages); markRead(id); }
+      else { drawList(); updateBadge(); }
+      const head = $(".thread-head .sub", root), c = conv();
+      if (head && c?.kind === "dm") head.textContent = `${c.online ? "Online" : "Offline"} · ${c.status || ""}`;
+    } catch { /* transient */ }
+  }, 4000);
 };
 
 // ---------------------------------------------------------------- energy
@@ -707,32 +983,57 @@ function showCode(root, rep) {
 }
 
 // ---------------------------------------------------------------- sightings
-function sightingItem(s, agent) {
-  return `<div class="item sev" id="s-${s.id}" style="--sev:${SEV[levelSev(s.match_level)]}">
-    <div class="meta">${pill(levelSev(s.match_level), `${s.match_level} · ${s.match_score}`)}
+function subjectLine(s) {
+  const subj = subjectOf(s);
+  if (subj === "character") return `${esc(s.character_name || "Unidentified character")}${s.game ? ` <span class="muted">· ${esc(s.game)}</span>` : ""}`;
+  if (subj === "agent") return `${s.agent_name ? `Claimed to be <b>${esc(s.agent_name)}</b>` : "Unnamed agent"}`;
+  return "POI-1";
+}
+
+function sightingItem(s, agent, agents = []) {
+  const subj = subjectOf(s);
+  const linked = s.linked_agent && agents.find(a => a.id === s.linked_agent);
+  const scorePill = subj === "agent" ? pill("info", "Agent report") : pill(levelSev(s.match_level), `${s.match_level} · ${s.match_score}`);
+  return `<div class="item sev" id="s-${s.id}" style="--sev:${subj === "agent" ? "var(--change)" : SEV[levelSev(s.match_level)]}">
+    <div class="meta"><span class="tag">${icon(SUBJECT_UI[subj].icon)}${SUBJECT_UI[subj].tag}</span>${scorePill}
       <span>${icon("pin")} ${esc(s.location)}</span><span>${icon("clock")} ${when(s.seen_at)}</span><span>${esc(s.reporter_name)}</span>
       ${s.status !== "new" ? `<span class="tag">${s.status === "verified" ? icon("check") : ""}${esc(s.status)}</span>` : ""}${s.case_ref ? `<span class="tag">${esc(s.case_ref)}</span>` : ""}</div>
-    <div class="body" style="margin-top:8px;color:var(--ink)">${esc(s.description)}</div>
+    ${subj !== "poi1" ? `<div class="title">${subjectLine(s)}</div>` : ""}
+    <div class="body" style="margin-top:${subj === "poi1" ? 8 : 0}px;color:var(--ink)">${esc(s.description)}</div>
+    ${s.also_poi1 ? `<div class="banner" style="margin:10px 0 0">${icon("target")}<div><b>Also matches POI-1.</b> This character report fits the Wenoti profile.</div></div>` : ""}
+    ${subj === "agent" && agent ? `<div class="row small" style="margin-top:8px">${linked ? `<span class="pill good">Linked to ${esc(linked.name)}</span>` : s.impostor ? `<span class="pill critical">Possible impersonator</span>` : `<span class="pill">Not linked</span>`}</div>` : ""}
     ${s.traits.length ? `<div class="tags" style="margin-top:10px">${s.traits.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
-    ${agent && s.status === "new" ? `<div class="actions"><button class="btn sm" data-verify="${s.id}">${icon("check")}Verify</button><button class="btn sm ghost" data-dismiss="${s.id}">Dismiss</button></div>` : ""}</div>`;
+    ${agent ? `<div class="actions">
+      ${s.status === "new" ? `<button class="btn sm" data-verify="${s.id}">${icon("check")}Verify</button><button class="btn sm ghost" data-dismiss="${s.id}">Dismiss</button>` : ""}
+      ${subj === "agent" ? `<select class="btn sm" data-link="${s.id}" aria-label="Link to agent" style="width:auto;height:30px;padding:0 8px">
+        <option value="">Link to agent…</option>${agents.map(a => `<option value="${a.id}" ${a.id === s.linked_agent ? "selected" : ""}>${esc(a.name)}</option>`).join("")}<option value="__impostor" ${s.impostor ? "selected" : ""}>Not an agent (impersonator)</option></select>` : ""}
+      ${discussBtn({ type: "sighting", id: s.id, label: `${SUBJECT_UI[subj].tag} sighting at ${s.location}` }, "sightings")}</div>` : ""}</div>`;
 }
 
 VIEWS.sightings = async el => {
   const agent = S.user.role === "agent";
-  const all = await api("/api/sightings");
-  const f = filters.sight || "all";
-  const items = all.filter(s => f === "all" || s.match_level === f);
-  const n = l => all.filter(s => l === "all" || s.match_level === l).length;
+  const [all, agents] = await Promise.all([api("/api/sightings"), agent ? api("/api/agents") : []]);
+  const subj = filters.subj || "all", lvl = filters.sight || "all";
+  const bySubj = all.filter(s => subj === "all" || subjectOf(s) === subj);
+  const items = bySubj.filter(s => lvl === "all" || subj === "agent" || s.match_level === lvl);
+  const n = (list, f) => list.filter(f).length;
+  const subjects = [["all", "All", null], ["poi1", "POI-1", "target"], ["character", "Characters", "gamepad"], ...(agent ? [["agent", "Agents", "badge"]] : [])];
   el.innerHTML = head(agent ? "Sightings" : "Sightings map",
-    agent ? "Citizen and agent reports, each scored against the POI-1 profile from Transcript A." : "Recent public reports. Reporter identities are never shown.",
+    agent ? "Reports of POI-1, other video game characters and EXUN agents, each scored against its own profile."
+      : "Recent public reports of POI-1 and other video game characters. Reporter identities are never shown.",
     { eyebrow: agent ? "Field" : "", actions: `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>` }) + `
     <div class="grid g2">
-      <div><div class="card" style="position:sticky;top:20px">${mapSVG({ sightings: items })}${mapLegend()}
-        <div class="label" style="margin-top:18px">POI-1 profile</div>
-        <div class="tags">${POI_TRAITS.map(([t]) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div></div>
-      <div><div class="seg" style="margin-bottom:14px">${["all", "strong", "possible", "low"].map(l => `<button data-f="${l}" class="${l === f ? "on" : ""}">${l}<span class="n">${n(l)}</span></button>`).join("")}</div>
-        <div class="list">${items.map(s => sightingItem(s, agent)).join("") || `<div class="card">${empty("eye", "No sightings", "Nothing matches this filter yet.", `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>`)}</div>`}</div></div>
+      <div><div class="card" style="position:sticky;top:20px">${mapSVG({ sightings: items })}${mapLegend(false, true)}
+        <div class="label" style="margin-top:18px">Profiles</div>
+        <div class="small ink2"><b>POI-1:</b> pointed ears, bedazzled armour, scabbard, leather gloves and boots, thick accent.<br>
+          <b>Other characters:</b> glitching or pixelated, impossible movement, game gear, power disturbances nearby.</div>
+        ${agent ? `<div class="hint" style="margin-top:8px">Agent sightings are visible to agents and the reporter only.</div>` : ""}</div></div>
+      <div>
+        <div class="seg" style="margin-bottom:10px">${subjects.map(([k, l, ic]) => `<button data-subj="${k}" class="${k === subj ? "on" : ""}">${ic ? icon(ic) : ""}${l}<span class="n">${n(all, s => k === "all" || subjectOf(s) === k)}</span></button>`).join("")}</div>
+        ${subj !== "agent" ? `<div class="seg" style="margin-bottom:14px">${["all", "strong", "possible", "low"].map(l => `<button data-f="${l}" class="${l === lvl ? "on" : ""}">${l}<span class="n">${n(bySubj, s => l === "all" || s.match_level === l)}</span></button>`).join("")}</div>` : ""}
+        <div class="list">${items.map(s => sightingItem(s, agent, agents)).join("") || `<div class="card">${empty("eye", "No sightings", "Nothing matches this filter yet.", `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>`)}</div>`}</div></div>
     </div>`;
+  $$("[data-subj]", el).forEach(b => (b.onclick = () => { filters.subj = b.dataset.subj; rerender(); }));
   $$("[data-f]", el).forEach(b => (b.onclick = () => { filters.sight = b.dataset.f; rerender(); }));
   $$("[data-verify],[data-dismiss]", el).forEach(b => (b.onclick = () => busy(b, async () => {
     const v = Boolean(b.dataset.verify);
@@ -740,55 +1041,105 @@ VIEWS.sightings = async el => {
     toast(v ? "Sighting verified" : "Sighting dismissed");
     rerender();
   })));
-  $$(".pin", el).forEach(p => p.addEventListener("click", () => {
-    const item = $("#s-" + p.dataset.id);
+  $$("[data-link]", el).forEach(sel => (sel.onchange = () => busy(null, async () => {
+    const impostor = sel.value === "__impostor";
+    await api(`/api/sightings/${sel.dataset.link}/link`, { agent_id: impostor ? null : sel.value || null, impostor });
+    toast(impostor ? "Marked as a possible impersonator" : sel.value ? "Linked to agent profile" : "Link removed");
+    rerender();
+  })));
+  const flash = id => {
+    const item = $("#s-" + id);
     if (!item) return;
     item.scrollIntoView({ behavior: "smooth", block: "center" });
     item.classList.add("flash");
     setTimeout(() => item.classList.remove("flash"), 1600);
-  }));
+  };
+  $$(".pin", el).forEach(p => p.addEventListener("click", () => flash(p.dataset.id)));
+  if (S.flash) { const id = S.flash; S.flash = null; setTimeout(() => flash(id), 50); }
+};
+
+const REPORT_COPY = {
+  poi1: {
+    title: "POI-1", desc: "The armoured man linked to Wenoti Arcade",
+    placeholder: "e.g. Tall man in shiny armour with pointed ears and a sword on his belt. Leather gloves. Spoke with a strange accent and seemed confused by the traffic lights.",
+    hint: "Start typing. Matching details light up as you write.",
+  },
+  character: {
+    title: "Another video game character", desc: "Anyone who looks like they stepped out of a game",
+    placeholder: "e.g. A short figure in a green tunic who looked slightly pixelated. Jumped clean over a parked car. The street lights flickered as they ran past.",
+    hint: "Describe how they looked and moved, and anything odd nearby (flickering lights, sparks, humming).",
+  },
+  agent: {
+    title: "An EXUN agent", desc: "Someone who is, or says they are, an agent",
+    placeholder: "e.g. Woman in a grey coat said she was with EXUN, showed a badge and asked whether the arcade machines had been acting strangely.",
+    hint: "If they gave a name or showed ID, include it. This helps us spot people impersonating agents.",
+  },
 };
 
 VIEWS.report = async el => {
-  let pick = null;
+  let pick = null, subject = filters.reportSubject || "poi1";
   const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   el.innerHTML = head("Report a sighting",
-    "Describe the person in your own words: appearance, clothing, how they spoke and behaved. The more detail, the better.",
-    { eyebrow: "Help the investigation" }) + `<div id="rwrap"><form id="sf" class="grid g2" novalidate>
-      <div class="card"><div class="card-head"><h2><span class="avatar" style="width:24px;height:24px;font-size:11px;background:var(--accent-soft);color:var(--accent)">1</span>What did you see?</h2></div>
-        <textarea name="description" id="desc" rows="6" required placeholder="e.g. Tall man in shiny armour with pointed ears and a sword on his belt. Leather gloves. Spoke with a strange accent and seemed confused by the traffic lights."></textarea>
-        <div class="row between" style="margin-top:16px"><span class="label" style="margin:0">Match with POI-1 profile</span><span class="mono small" id="mscore">0</span></div>
-        <div class="meter"><span id="mbar" style="width:0%"></span></div>
-        <div class="tags" id="mchips" style="margin-top:12px">${POI_TRAITS.map(([t]) => `<span class="chip" data-t="${esc(t)}">${icon("check")}${esc(t)}</span>`).join("")}</div>
-        <div class="hint" id="mhint" style="margin-top:10px">Start typing. Matching details light up as you write.</div>
+    "Seen POI-1, another character who seems to have escaped a game, or an EXUN agent? Tell us what you saw. Every report is reviewed by an agent.",
+    { eyebrow: "Help the investigation" }) + `<div id="rwrap"><form id="sf" novalidate>
+      <div class="card" style="margin-bottom:16px"><div class="card-head"><h2><span class="step-n">1</span>Who did you see?</h2></div>
+        <div class="choice-grid" role="radiogroup">${Object.entries(REPORT_COPY).map(([k, c]) => `<button type="button" class="choice ${k === subject ? "on" : ""}" data-subject="${k}" role="radio" aria-checked="${k === subject}">
+          <span class="ic">${icon(SUBJECT_UI[k].icon)}</span><span class="t">${c.title}</span><span class="d">${c.desc}</span></button>`).join("")}</div></div>
+      <div class="grid g2">
+      <div class="card"><div class="card-head"><h2><span class="step-n">2</span>What did you see?</h2></div>
+        <div id="extra"></div>
+        <div class="field" style="margin-top:0"><label for="desc">Description</label><textarea name="description" id="desc" rows="6" required></textarea></div>
+        <div class="row between" style="margin-top:16px"><span class="label" style="margin:0" id="mlabel"></span><span class="mono small" id="mscore">0</span></div>
+        <div class="meter" id="mmeter"><span id="mbar" style="width:0%"></span></div>
+        <div class="tags" id="mchips" style="margin-top:12px"></div>
+        <div class="hint" id="mhint" style="margin-top:10px"></div>
       </div>
-      <div class="card"><div class="card-head"><h2><span class="avatar" style="width:24px;height:24px;font-size:11px;background:var(--accent-soft);color:var(--accent)">2</span>Where and when?</h2></div>
+      <div class="card"><div class="card-head"><h2><span class="step-n">3</span>Where and when?</h2></div>
         <div id="pickmap"></div>
         <div class="grid g2" style="gap:12px;margin-top:12px">
           <div class="field" style="margin:0"><label for="place">Location</label><select name="place" id="place"><option value="">Tap the map or choose…</option>${Object.keys(PLACES).map(p => `<option>${esc(p)}</option>`).join("")}</select></div>
           <div class="field" style="margin:0"><label for="seen">Time</label><input type="datetime-local" id="seen" name="seen_at" value="${nowLocal}"></div></div>
         <div class="hint" id="locmsg">No location selected yet.</div>
         <label class="check"><input type="checkbox" name="anonymous"><span>Submit anonymously<div class="hint" style="margin:0">Agents won't see your name.</div></span></label>
+        <div class="hint" id="privacy" style="margin-top:10px"></div>
         <div class="error" id="serr"></div>
         <button class="btn primary block" style="margin-top:16px;height:42px">${icon("send")}Submit report</button>
-      </div></form></div>`;
+      </div></div></form></div>`;
 
   const f = $("#sf", el);
+  const setSubject = k => {
+    subject = filters.reportSubject = k;
+    $$(".choice", el).forEach(c => { const on = c.dataset.subject === k; c.classList.toggle("on", on); c.setAttribute("aria-checked", on); });
+    const keep = { character_name: f.character_name?.value, game: f.game?.value, agent_name: f.agent_name?.value };
+    $("#extra", el).innerHTML = k === "character" ? `<div class="grid g2" style="gap:12px;margin-bottom:14px">
+        <div class="field" style="margin:0"><label for="cname">Character name</label><input id="cname" name="character_name" placeholder="If you recognise them"></div>
+        <div class="field" style="margin:0"><label for="cgame">Game</label><input id="cgame" name="game" placeholder="e.g. Dungeon Dash"></div></div>`
+      : k === "agent" ? `<div class="field" style="margin:0 0 14px"><label for="aname">Name or codename they gave</label><input id="aname" name="agent_name" placeholder="Leave blank if they didn't say"></div>` : "";
+    Object.entries(keep).forEach(([n, v]) => { if (f[n] && v) f[n].value = v; });
+    f.description.placeholder = REPORT_COPY[k].placeholder;
+    $("#mlabel", el).textContent = k === "agent" ? "Details we look for" : `Match with ${k === "poi1" ? "POI-1" : "escaped-character"} profile`;
+    $("#mchips", el).innerHTML = SUBJECTS[k].traits.map(([t]) => `<span class="chip" data-t="${esc(t)}">${icon("check")}${esc(t)}</span>`).join("");
+    $("#privacy", el).innerHTML = k === "agent" ? `${icon("shield")} Agent sightings are only visible to EXUN, never on the public map.` : "";
+    live();
+  };
   const live = () => {
-    const m = matchPoi(f.description.value, pick?.x, pick?.y);
-    $("#mscore", el).textContent = m.score;
-    $("#mbar", el).style.width = m.score + "%";
-    $("#mbar", el).style.background = m.level === "strong" ? "var(--critical)" : m.level === "possible" ? "var(--warning)" : "var(--accent)";
+    const m = scoreSighting(subject, f.description.value, pick?.x, pick?.y);
+    $("#mscore", el).textContent = subject === "agent" ? `${m.traits.length}/${SUBJECTS.agent.traits.length}` : m.score;
+    $("#mbar", el).style.width = (subject === "agent" ? (100 * m.traits.length) / SUBJECTS.agent.traits.length : m.score) + "%";
+    $("#mbar", el).style.background = subject === "agent" ? "var(--change)" : m.level === "strong" ? "var(--critical)" : m.level === "possible" ? "var(--warning)" : "var(--accent)";
     $$(".chip", el).forEach(c => c.classList.toggle("on", m.traits.includes(c.dataset.t)));
-    $("#mhint", el).textContent = !f.description.value.trim() ? "Start typing. Matching details light up as you write."
-      : m.level === "strong" ? "This closely matches POI-1. Agents will be alerted as soon as you submit."
-      : m.level === "possible" ? "Partial match. Any other details you remember help." : "Keep going: clothing, ears, accent, what they were doing.";
+    const empty = !f.description.value.trim();
+    $("#mhint", el).textContent = empty || subject === "agent" ? REPORT_COPY[subject].hint
+      : m.level === "strong" ? (subject === "poi1" ? "This closely matches POI-1. Agents will be alerted as soon as you submit." : "This looks like an escaped character. Agents will be alerted when you submit.")
+      : m.level === "possible" ? "Partial match. Any other details you remember help." : "Keep going: clothing, how they moved, what was happening around them.";
   };
   const drawMap = () => {
     $("#pickmap", el).innerHTML = mapSVG({ pick, id: "pm" });
     bindPicker($("#pm", el), (x, y) => { pick = { x, y }; f.place.value = ""; $("#locmsg", el).textContent = nearestPlace(x, y); drawMap(); live(); });
   };
+  $$(".choice", el).forEach(c => (c.onclick = () => setSubject(c.dataset.subject)));
   drawMap();
+  setSubject(subject);
   f.description.oninput = live;
   f.place.onchange = e => {
     const p = PLACES[e.target.value];
@@ -801,22 +1152,25 @@ VIEWS.report = async el => {
     if (!pick) { $("#serr", el).textContent = "Please choose a location on the map or from the list."; return; }
     return busy(e.submitter, async () => {
       const s = await api("/api/sightings", {
-        description: f.description.value, seen_at: f.seen_at.value, anonymous: f.anonymous.checked,
+        subject, description: f.description.value, seen_at: f.seen_at.value, anonymous: f.anonymous.checked,
+        character_name: f.character_name?.value, game: f.game?.value, agent_name: f.agent_name?.value,
         location: f.place.value || nearestPlace(pick.x, pick.y), x: pick.x, y: pick.y,
       });
-      const msg = {
-        strong: ["Field agents have been alerted", "Your description closely matches the person EXUN is looking for. Thank you. Stay at a safe distance."],
-        possible: ["An analyst will review your report", "It partially matches the profile. Thank you for reporting."],
-        low: ["Report logged", "Thank you. Every report helps, even when it doesn't match."],
-      }[s.match_level];
+      const msg = s.subject === "agent"
+        ? ["Agent report received", "EXUN Operations will review it. If this person isn't a real agent, we'll follow up.", "info", "Agent report"]
+        : s.also_poi1 || (s.subject === "poi1" && s.match_level === "strong")
+          ? ["Field agents have been alerted", "Your description closely matches the person EXUN is looking for. Thank you. Stay at a safe distance.", "critical", `strong match · ${s.match_score}`]
+          : s.match_level === "strong" ? ["Field agents have been alerted", "This looks like a character that has left its game. Thank you. Stay at a safe distance.", "critical", `strong match · ${s.match_score}`]
+          : s.match_level === "possible" ? ["An analyst will review your report", "It partially matches the profile. Thank you for reporting.", "medium", `possible match · ${s.match_score}`]
+          : ["Report logged", "Thank you. Every report helps, even when it doesn't match.", "low", `low match · ${s.match_score}`];
       $("#rwrap", el).innerHTML = `<div class="card" style="max-width:560px;margin:0 auto;text-align:center;padding:36px 24px">
-        <div class="ic" style="width:56px;height:56px;border-radius:50%;margin:0 auto 14px;display:grid;place-items:center;background:var(--good-soft);color:var(--good)">${icon("check")}</div>
+        <div style="width:56px;height:56px;border-radius:50%;margin:0 auto 14px;display:grid;place-items:center;background:var(--good-soft);color:var(--good)">${icon("check")}</div>
         <h2 style="font-size:20px;margin-bottom:6px">${msg[0]}</h2><p class="ink2">${msg[1]}</p>
-        <div style="margin:16px 0">${pill(levelSev(s.match_level), `${s.match_level} match · ${s.match_score}`)}</div>
+        <div style="margin:16px 0" class="row" ><span style="flex:1"></span><span class="tag">${icon(SUBJECT_UI[s.subject].icon)}${SUBJECT_UI[s.subject].tag}</span>${pill(msg[2], msg[3])}<span style="flex:1"></span></div>
         ${s.traits.length ? `<div class="tags" style="justify-content:center">${s.traits.map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>` : ""}
         <div class="row" style="justify-content:center;margin-top:22px"><button class="btn primary" id="again">${icon("plus")}Report another</button><a class="btn" href="#sightings">View map</a></div></div>`;
       $("#again", el).onclick = rerender;
-      if (s.match_level === "strong") toast("Strong match: agents alerted", { type: "info" });
+      if (msg[2] === "critical") toast("Strong match: agents alerted", { type: "info" });
     });
   };
 };
@@ -905,11 +1259,13 @@ VIEWS.integrity = async el => {
 
 // ---------------------------------------------------------------- agents
 VIEWS.agents = async el => {
-  const agents = await api("/api/agents");
+  const [agents, sightings] = await Promise.all([api("/api/agents"), api("/api/sightings")]);
+  const seenBy = id => sightings.filter(s => s.linked_agent === id);
   const me = agents.find(a => a.username === S.user.username);
   let pick = me ? { x: me.x, y: me.y } : null;
   const tone = s => (/backup/i.test(s) ? "critical" : /relocat|off/i.test(s) ? "medium" : "good");
-  el.innerHTML = head("Agent tracker", "Last known positions and status of EXUN personnel. Check in to update your own.", { eyebrow: "Field" }) + `
+  el.innerHTML = head("Agent tracker", "Last known positions and status of EXUN personnel. Check in to update your own, or message a teammate directly.",
+    { eyebrow: "Field", actions: `<a class="btn" href="#comms/field">${icon("hash")}field-ops</a>` }) + `
     <div class="grid g-side">
       <div class="card"><div id="amap"></div><div class="legend"><span><i class="sw dia" style="background:var(--accent)"></i>Agent position</span>${me ? `<span class="muted">Tap the map to set your check-in location</span>` : ""}</div></div>
       <div class="card">${me ? `<div class="card-head"><div><h2>${icon("pin")}Check in</h2><div class="sub">${esc(me.name)} · last ${ago(me.last_checkin)}</div></div></div><form id="cf">
@@ -922,11 +1278,15 @@ VIEWS.agents = async el => {
         : empty("users", "No agent profile", "This account isn't linked to an agent profile.")}</div>
     </div>
     <div class="card" style="margin-top:16px"><div class="card-head"><h2>${icon("users")}Personnel</h2><span class="muted small">${agents.length} agents</span></div><div class="table-wrap"><table>
-      <tr><th>Agent</th><th>Status</th><th>Last location</th><th>Last check-in</th><th>Assignment</th></tr>
+      <tr><th>Agent</th><th>Status</th><th>Last location</th><th>Last check-in</th><th>Public sightings</th><th>Assignment</th><th></th></tr>
       ${agents.map(a => `<tr class="${tone(a.status) === "critical" ? "flag" : ""}"><td><div class="row" style="gap:10px;flex-wrap:nowrap"><span class="avatar">${initials(a.name)}</span><div><div style="font-weight:600">${esc(a.name)}${a.username === S.user.username ? ' <span class="muted small">(you)</span>' : ""}</div><div class="small muted mono">${esc(a.id)} · ${esc(a.rank)}</div></div></div></td>
-        <td>${pill(tone(a.status), a.status)}</td><td>${esc(a.location)}</td><td title="${esc(when(a.last_checkin))}">${ago(a.last_checkin)}</td><td class="small ink2">${esc(a.assignment)}
-        ${a.trail.length ? `<div class="hint">Trail: ${a.trail.slice(0, 3).map(t => esc(t.location.split(",")[0])).join(" ← ")}</div>` : ""}</td></tr>`).join("")}
+        <td>${pill(tone(a.status), a.status)}</td><td>${esc(a.location)}</td><td title="${esc(when(a.last_checkin))}">${ago(a.last_checkin)}</td>
+        <td>${seenBy(a.id).length ? `<a href="#sightings" data-seen="${seenBy(a.id)[0].id}">${seenBy(a.id).length} · ${esc(seenBy(a.id)[0].location.split(",")[0])}</a><div class="hint">${ago(seenBy(a.id)[0].seen_at)}</div>` : `<span class="muted">—</span>`}</td>
+        <td class="small ink2">${esc(a.assignment)}
+        ${a.trail.length ? `<div class="hint">Trail: ${a.trail.slice(0, 3).map(t => esc(t.location.split(",")[0])).join(" ← ")}</div>` : ""}</td>
+        <td>${a.username !== S.user.username ? `<a class="btn sm" href="#comms/${dmId(S.user.username, a.username)}">${icon("message")}Message</a>` : ""}</td></tr>`).join("")}
     </table></div></div>`;
+  $$("[data-seen]", el).forEach(a => (a.onclick = () => { S.flash = a.dataset.seen; filters.subj = "agent"; }));
   const draw = () => {
     $("#amap", el).innerHTML = mapSVG({ agents, pick: me ? pick : null, id: "am" });
     if (me) bindPicker($("#am", el), (x, y) => { pick = { x, y }; $("#cplace", el).value = ""; $("#cmsg", el).textContent = nearestPlace(x, y); draw(); });
