@@ -88,3 +88,41 @@ export function scoreSighting(subject, description, x, y) {
   }
   return matchPoi(description, x, y);
 }
+
+// ---------------------------------------------------------------- missing-board profiles
+// A profile's traits are data: { label, keywords: [...], weight: 1-3 }.
+// A trait matches when any keyword appears at the start of a word ("armour" matches "armoured").
+const kwCache = new Map();
+const kwRegex = k => {
+  if (!kwCache.has(k)) kwCache.set(k, new RegExp("(?:^|[^a-z0-9])" + k.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/'/g, ".?")));
+  return kwCache.get(k);
+};
+
+export function matchProfile(profile, description, x, y) {
+  const text = String(description || "").toLowerCase();
+  const traits = [];
+  let got = 0, total = 0;
+  for (const t of profile.traits || []) {
+    const w = Number(t.weight) || 1;
+    total += w;
+    if ((t.keywords || []).some(k => k && kwRegex(k).test(text))) { got += w; traits.push(t.label); }
+  }
+  let score = total ? Math.round((100 * got) / total) : 0;
+  const ls = profile.last_seen;
+  if (ls && ls.x != null && x != null && y != null && Math.hypot(x - ls.x, y - ls.y) < 15) {
+    score += 5;
+    traits.push("Near last known location");
+  }
+  score = Math.min(score, 100);
+  return { score, level: score >= 60 ? "strong" : score >= 35 ? "possible" : "low", traits };
+}
+
+// Best-matching profile for a description, for reports of someone "not on the board"
+export function bestProfile(profiles, description, x, y) {
+  let best = null;
+  for (const p of profiles) {
+    const m = matchProfile(p, description, x, y);
+    if (!best || m.score > best.score) best = { id: p.id, name: p.name, ...m };
+  }
+  return best;
+}
