@@ -4,22 +4,19 @@ import { createApi } from "../../lib/api.js";
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
-let handle;
+// The Blobs token is issued per invocation and expires, so the store is
+// opened on every call rather than cached on a warm instance.
+const blobs = () => getStore({ name: "sentinel", consistency: "strong" });
 
-export default async req => {
-  if (!handle) {
-    // Created per instance on first request, once the Blobs context is available
-    const blobs = getStore({ name: "sentinel", consistency: "strong" });
-    handle = createApi({
-      store: {
-        get: key => blobs.get(key, { type: "json" }),
-        set: (key, value) => blobs.setJSON(key, value),
-      },
-      secret: process.env.SENTINEL_SECRET || undefined,
-      agencyCode: process.env.SENTINEL_AGENCY_CODE || undefined,
-    });
-  }
-  return handle(req);
-};
+const handle = createApi({
+  store: {
+    get: key => blobs().get(key, { type: "json" }),
+    set: (key, value) => blobs().setJSON(key, value),
+  },
+  secret: process.env.SENTINEL_SECRET || undefined,
+  agencyCode: process.env.SENTINEL_AGENCY_CODE || undefined,
+});
+
+export default async req => handle(req);
 
 export const config = { path: "/api/*" };
