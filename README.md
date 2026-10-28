@@ -1,6 +1,8 @@
 # Sentinel
 
-Public missing board and case console for EXUN, built around the Wenoti Arcade case (The Reckoning V: Origins, machine `MJWHKZLTNBUXE5A`).
+<img src="public/brand/logo.svg" alt="Sentinel" width="320">
+
+Public missing board and agent case console, built around the Wenoti Arcade case (The Reckoning V: Origins, machine `MJWHKZLTNBUXE5A`).
 
 - **Frontend:** static HTML/CSS/JS in `public/` (no build step)
 - **Backend:** one Netlify Function (`netlify/functions/api.js`) serving `/api/*`
@@ -13,8 +15,8 @@ Public missing board and case console for EXUN, built around the Wenoti Arcade c
 2. In Netlify: **Add new site → Import an existing project** → pick the repo.
    The settings are read from `netlify.toml`, so leave build command and publish directory as they are.
 3. **Site configuration → Environment variables**, add:
-   - `EXUN_SECRET`: a long random string that signs login sessions (**required**; otherwise a public default is used)
-   - `EXUN_AGENCY_CODE`: optional, the code needed to register as an agent (default `EXUN-2026`)
+   - `SENTINEL_SECRET`: a long random string that signs login sessions (**required**; otherwise a public default is used)
+   - `SENTINEL_AGENCY_CODE`: optional, the code needed to register as an agent (default `SENTINEL-2026`)
 4. Deploy. The first request seeds the demo accounts and case data into Blobs.
 
 **Option B: CLI**
@@ -22,7 +24,7 @@ Public missing board and case console for EXUN, built around the Wenoti Arcade c
 npm install
 npx netlify login
 npx netlify init          # create/link a site
-npx netlify env:set EXUN_SECRET "$(openssl rand -hex 32)"
+npx netlify env:set SENTINEL_SECRET "$(openssl rand -hex 32)"
 npx netlify deploy --prod
 ```
 
@@ -56,7 +58,7 @@ Delete `./data` to reset the local case state.
 | Missing board | Everyone | Agents publish "missing" posters for any character or person, with a description, photo, public guidance (harmless / caution / do not approach), last-seen location and a **"what to look for"** trait list (each trait has keywords and an importance). Citizens browse the board; agents can mark people found or archive them. POI-1 is the first poster. |
 | Slideshow and kiosk | Everyone | Published posters rotate on the landing page. `#kiosk` is a full-screen display for public screens outside stations and arcades, like wanted posters. |
 | Public appeal + sign-in | Everyone | Landing page with the slideshow, live counts and one-click demo logins. |
-| Report a sighting | Citizens | Pick someone from the board (scored live against that poster's traits), **someone not on the board** (checked against every poster, with a "this sounds like…" suggestion), or an **EXUN agent**. Pin on the map. Strong matches alert field agents. Reporter identity is hidden from other citizens. |
+| Report a sighting | Citizens | Pick someone from the board (scored live against that poster's traits), **someone not on the board** (checked against every poster, with a "this sounds like…" suggestion), or an **Sentinel agent**. Pin on the map. Strong matches alert field agents. Reporter identity is hidden from other citizens. |
 | Sightings map | Everyone | Map plus a feed filterable by subject and match level. Agents verify or dismiss reports. Verifying a sighting moves the poster's last-seen location. |
 | Agent sightings | Agents | Never shown publicly. If the reporter names an agent who isn't on the roster, a "possible impersonation" alert is raised. Agents can link reports to an agent profile, and the tracker shows each agent's public sightings. |
 | Comms | Agents | Team chat with channels (#general, #wenoti-case, #field-ops, #sightings-triage) and direct messages. Supports @mentions, pinned messages, urgent pings (which alert every field agent), attached evidence (alerts, sightings, analyses), online presence and unread badges. "Discuss" buttons on alerts and sightings open the chat with that item attached. |

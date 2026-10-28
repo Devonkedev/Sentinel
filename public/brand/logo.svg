@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" role="img" aria-label="Sentinel">
+  <g transform="translate(8 8)">
+    <rect width="64" height="64" rx="6" fill="#1d1b16"/>
+    <g fill="#fbf8f1">
+      <rect x="30" y="5" width="4" height="8"/><rect x="30" y="51" width="4" height="8"/>
+      <rect x="1" y="30" width="6" height="4"/><rect x="57" y="30" width="6" height="4"/>
+    </g>
+    <path d="M10 32 Q32 12 54 32 Q32 52 10 32 Z" fill="none" stroke="#fbf8f1" stroke-width="4" stroke-linejoin="round"/>
+    <rect x="25" y="25" width="14" height="14" fill="#fbf8f1"/>
+    <rect x="32" y="25" width="7" height="7" fill="#c0281c"/>
+  </g>
+  <text x="90" y="47" font-family="IBM Plex Mono, ui-monospace, Menlo, monospace" font-weight="700" font-size="34" letter-spacing="7" fill="#1d1b16">SENTINEL</text>
+  <rect x="90" y="56" width="22" height="3" fill="#c0281c"/>
+  <text x="118" y="60" font-family="IBM Plex Mono, ui-monospace, Menlo, monospace" font-weight="500" font-size="9.5" letter-spacing="3.2" fill="#857c6a">WE ARE WATCHING</text>
+</svg>

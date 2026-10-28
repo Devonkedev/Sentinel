@@ -1,5 +1,5 @@
 // Sentinel frontend (vanilla ES modules, no build step)
-import { icon } from "./icons.js";
+import { icon, mark } from "./icons.js";
 import { PLACES, SUBJECTS, scoreSighting, matchProfile, bestProfile } from "./poi.js";
 import CV from "./cv.js";
 
@@ -25,7 +25,7 @@ const store = {
   get: k => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* storage blocked */ } },
 };
-S.token = store.get("exun_token");
+S.token = store.get("sentinel_token");
 
 // Server timestamps end in Z (UTC); user-entered times are local wall-clock
 const toDate = s => (s ? new Date(/Z$/.test(s) ? s : /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + "T00:00" : s) : null);
@@ -53,7 +53,7 @@ const subjectOf = s => (!s.subject || s.subject === "poi1" ? "profile" : s.subje
 const SUBJECT_UI = {
   profile: { icon: "target", label: "On the missing board", tag: "Missing board" },
   character: { icon: "gamepad", label: "Not on the board", tag: "Unlisted" },
-  agent: { icon: "badge", label: "EXUN agent", tag: "Agent" },
+  agent: { icon: "badge", label: "Sentinel agent", tag: "Agent" },
 };
 const subjectTag = s => (subjectOf(s) === "profile" ? s.profile_name || "Missing board" : SUBJECT_UI[subjectOf(s)].tag);
 const DANGER = { harmless: ["good", "Harmless"], caution: ["medium", "Approach with caution"], do_not_approach: ["critical", "Do not approach"] };
@@ -120,7 +120,7 @@ function head(title, text, { eyebrow = "", actions = "" } = {}) {
 
 function setTheme(t) {
   document.documentElement.dataset.theme = t;
-  store.set("exun_theme", t);
+  store.set("sentinel_theme", t);
   $$("[data-theme-toggle]").forEach(b => (b.innerHTML = icon(t === "dark" ? "sun" : "moon")));
 }
 const themeBtn = (cls = "btn ghost icon") => `<button class="${cls}" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">${icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")}</button>`;
@@ -261,13 +261,13 @@ function bindChart(root, rows) {
 async function renderLanding(mode = "login", role = "citizen") {
   $("#app").innerHTML = `<div class="landing">
     <section class="hero">
-      <div class="row between"><a class="brand" href="#"><span class="brand-mark">${icon("shield")}</span>
+      <div class="row between"><a class="brand" href="#"><span class="brand-mark">${mark()}</span>
         <span><div class="brand-name">Sentinel</div><div class="brand-sub">Extradigital Exceptions &amp; Unknowns Network</div></span></a></div>
       <div class="hero-body">
         <div class="row between" style="margin-bottom:6px"><span class="badge"><span class="live"></span>Public notice</span>
           <a class="btn sm ghost" href="#kiosk">${icon("layers")}Kiosk mode</a></div>
         <h1>Have you seen them?</h1>
-        <p class="lead">Video game characters have been disappearing from arcades. EXUN is asking the public to look out for the characters below. If you see one, don't approach. Report it.</p>
+        <p class="lead">Video game characters have been disappearing from arcades. Sentinel is asking the public to look out for the characters below. If you see one, don't approach. Report it.</p>
         <div id="lshow"></div>
         <div class="row" style="margin-top:20px"><button class="btn primary" id="cta" style="height:42px">${icon("eye")}Report a sighting</button>
           <div class="hero-stats" id="hstats"></div></div>
@@ -295,7 +295,7 @@ async function renderLanding(mode = "login", role = "citizen") {
       <div class="demo"><div class="small muted">Demo accounts, one click</div><div class="demo-grid">
         ${[["conis:conis2026", "Conis Nikrobo", "Agent · case lead"], ["mega:mega2026", "Agent Mega", "Agent · field"], ["citizen:citizen2026", "Demo Citizen", "Citizen"]].map(([c, n, r]) =>
           `<button class="demo-btn" data-demo="${c}"><span class="avatar">${initials(n)}</span><span class="who"><div>${n}</div><div>${r}</div></span>${icon("arrow")}</button>`).join("")}
-      </div><div class="hint" style="margin-top:10px">Agent sign-up code for the demo: <span class="mono">EXUN-2026</span></div></div>
+      </div><div class="hint" style="margin-top:10px">Agent sign-up code for the demo: <span class="mono">SENTINEL-2026</span></div></div>
     </div></section>
     <div class="theme-fab">${themeBtn("btn icon")}</div>
   </div>`;
@@ -333,7 +333,7 @@ async function renderLanding(mode = "login", role = "citizen") {
 async function signIn(path, body) {
   const r = await api(path, body);
   S.token = r.token; S.user = r.user;
-  store.set("exun_token", r.token);
+  store.set("sentinel_token", r.token);
   location.hash = r.user.role === "citizen" && filters.reportChoice ? "report/" + filters.reportChoice : "";
   toast(`Signed in as ${r.user.name}`);
   boot();
@@ -343,7 +343,7 @@ function signOut() {
   S.token = null; S.user = null; S.alerts = []; S.comms = null;
   clearInterval(S.viewTimer);
   S.slideStop?.();
-  store.set("exun_token", null);
+  store.set("sentinel_token", null);
   clearInterval(S.poll);
   history.replaceState(null, "", location.pathname);
   renderLanding();
@@ -373,7 +373,7 @@ function renderShell() {
     lastSec = sec;
     return `${h}<a href="#${id}" data-route="${id}">${icon(r.icon)}<span>${r.title}</span>${id === "alerts" ? `<span class="count hidden" id="acount"></span>` : id === "comms" ? `<span class="count hidden" id="ccount"></span>` : ""}</a>`;
   }).join("");
-  const brand = `<a class="brand" href="#"><span class="brand-mark">${icon("shield")}</span><span><div class="brand-name">Sentinel</div>
+  const brand = `<a class="brand" href="#"><span class="brand-mark">${mark()}</span><span><div class="brand-name">Sentinel</div>
     <div class="brand-sub">${role === "agent" ? "Agent console" : "Citizen portal"}</div></span></a>`;
   $("#app").innerHTML = `<div class="shell" id="shell">
     <aside class="side" id="side">${brand}<nav class="nav">${nav}</nav>
@@ -464,7 +464,7 @@ window.addEventListener("hashchange", navigate);
 
 async function boot() {
   if (location.hash === "#kiosk") return renderKiosk();
-  if (!S.user && S.token) { try { S.user = await api("/api/me"); } catch { S.token = null; store.set("exun_token", null); } }
+  if (!S.user && S.token) { try { S.user = await api("/api/me"); } catch { S.token = null; store.set("sentinel_token", null); } }
   if (!S.user) return renderLanding();
   await loadProfiles();
   renderShell();
@@ -497,7 +497,7 @@ VIEWS.dashboard = async el => {
   const doneCount = steps.filter(s => s[2]).length;
   const tlColor = { Energy: "var(--critical)", Code: "var(--serious)", Sighting: "var(--accent)", Integrity: "var(--warning)" };
   el.innerHTML = `
-    <div class="banner">${icon("alert")}<div><b>Notice EIA/EXUN/SUS-01</b> · effective 27 Oct 2026. EXUN operational authority is suspended pending administrative review. Case records remain accessible.</div></div>
+    <div class="banner">${icon("alert")}<div><b>Notice EIA/SNT/SUS-01</b> · effective 27 Oct 2026. Sentinel's operational authority is suspended pending administrative review. Case records remain accessible.</div></div>
     ${head("Wenoti Arcade", `The Reckoning V: Origins · machine <span class="mono">${CASE.machineId}</span> · 92nd Avenue, nuxEland`, { eyebrow: "Active case" })}
     <div class="grid g4">
       ${[["bell", "Open alerts", open.length, `${open.filter(a => a.severity === "critical").length} critical`, "#alerts"],
@@ -545,7 +545,7 @@ VIEWS.dashboard = async el => {
   const doEscalate = async btn => {
     const ok = await confirmDialog({
       title: "Escalate case verdict?", danger: true, ok: "Escalate",
-      body: `This sends the verdict <b>${esc(c.verdict)} (${c.score}/100)</b> and its evidence to ${c.score >= 70 ? "EIA Command, EXUN Operations, the National Defence Liaison and the Department of Electricity" : "EXUN Operations and the Department of Electricity"}.`,
+      body: `This sends the verdict <b>${esc(c.verdict)} (${c.score}/100)</b> and its evidence to ${c.score >= 70 ? "EIA Command, Sentinel Operations, the National Defence Liaison and the Department of Electricity" : "Sentinel Operations and the Department of Electricity"}.`,
     });
     if (!ok) return;
     await busy(btn, async () => {
@@ -592,13 +592,13 @@ VIEWS.alerts = async el => {
       <div class="list">${items.map(alertItem).join("") || `<div class="card">${empty("checkCircle", f === "open" ? "No open alerts" : "Nothing here", "Alerts appear when analyses, sightings or inspections find something.")}</div>`}</div></div>
     <div><div class="card" style="position:sticky;top:20px"><div class="card-head"><h2>${icon("layers")}Routing rules</h2></div><div class="table-wrap"><table>
       <tr><th>Trigger</th><th>Severity</th><th>Notified</th></tr>
-      ${[["Class removed but still referenced", "critical", "EIA Command, EXUN Ops, Cyber Forensics, Defence Liaison"],
-         ["Energy spike HVAC can't explain", "critical", "EXUN Ops, Dept. of Electricity"],
+      ${[["Class removed but still referenced", "critical", "EIA Command, Sentinel Ops, Cyber Forensics, Defence Liaison"],
+         ["Energy spike HVAC can't explain", "critical", "Sentinel Ops, Dept. of Electricity"],
          ["Reported usage ≠ meter register", "high", "Dept. of Electricity"],
-         ["Case verdict ≥ 70, escalated", "critical", "EIA Command, EXUN Ops, Defence Liaison, Dept. of Electricity"],
-         ["Strong POI-1 sighting (≥ 60)", "high", "EXUN Field Agents, EXUN Ops"],
-         ["Agent requests backup", "critical", "EXUN Field Agents, EXUN Ops"],
-         ["Severe surface damage", "high", "EXUN Ops, Facility Owner, Vendor"],
+         ["Case verdict ≥ 70, escalated", "critical", "EIA Command, Sentinel Ops, Defence Liaison, Dept. of Electricity"],
+         ["Strong POI-1 sighting (≥ 60)", "high", "Sentinel Field Agents, Sentinel Ops"],
+         ["Agent requests backup", "critical", "Sentinel Field Agents, Sentinel Ops"],
+         ["Severe surface damage", "high", "Sentinel Ops, Facility Owner, Vendor"],
          ["Spike consistent with HVAC", "low", "Facility Owner"]].map(r => `<tr><td>${r[0]}</td><td>${pill(r[1])}</td><td class="small ink2">${r[2]}</td></tr>`).join("")}
     </table></div></div></div></div>`;
   $$("[data-f]", el).forEach(b => (b.onclick = () => { filters.alerts = b.dataset.f; rerender(); }));
@@ -968,8 +968,8 @@ VIEWS.code = async el => {
 };
 
 const CODE_ROUTES = {
-  critical: "EIA Command, EXUN Operations, Cyber Forensics Unit, National Defence Liaison",
-  high: "EXUN Operations, Cyber Forensics Unit", medium: "Cyber Forensics Unit, Machine Vendor", low: "Logged only", none: "Logged only",
+  critical: "EIA Command, Sentinel Operations, Cyber Forensics Unit, National Defence Liaison",
+  high: "Sentinel Operations, Cyber Forensics Unit", medium: "Cyber Forensics Unit, Machine Vendor", low: "Logged only", none: "Logged only",
 };
 
 function showCode(root, rep) {
@@ -1080,7 +1080,7 @@ async function renderKiosk() {
   document.title = "Missing · Sentinel";
   const profiles = (await loadProfiles()).filter(p => p.status === "missing");
   $("#app").innerHTML = `<div class="kiosk">
-    <header class="kiosk-top"><div class="brand"><span class="brand-mark">${icon("shield")}</span><span><div class="brand-name">Sentinel</div><div class="brand-sub">Public notice · etiNuxe Intelligence Agency</div></span></div>
+    <header class="kiosk-top"><div class="brand"><span class="brand-mark">${mark()}</span><span><div class="brand-name">Sentinel</div><div class="brand-sub">Public notice · etiNuxe Intelligence Agency</div></span></div>
       <div class="kiosk-clock mono" id="kclock"></div><a class="btn" href="#">${icon("x")}Exit</a></header>
     <div class="kiosk-stage" id="kshow"></div>
     <footer class="kiosk-foot"><span><b>Seen someone on this board?</b> Do not approach. Report it at <span class="mono">${esc(location.host || "sentinel")}</span></span>
@@ -1114,8 +1114,8 @@ VIEWS.missing = async (el, param) => {
        ${!p.published ? `<span class="stamp-inline">Draft</span>` : ""}`
     : p.status === "missing" ? `<a class="btn primary" href="#report/${p.id}">${icon("eye")}I've seen them</a>` : "";
   el.innerHTML = head("Missing board",
-    agent ? "Publish the characters and people EXUN is looking for. Published posters appear on the public slideshow and kiosk screens, and citizens report sightings against them."
-      : "Characters and people EXUN is looking for. If you see one of them, don't approach. Report it.",
+    agent ? "Publish the characters and people Sentinel is looking for. Published posters appear on the public slideshow and kiosk screens, and citizens report sightings against them."
+      : "Characters and people Sentinel is looking for. If you see one of them, don't approach. Report it.",
     { eyebrow: agent ? "Field" : "Public notice", actions: `<a class="btn" href="#kiosk" title="Full-screen slideshow for public screens">${icon("layers")}Kiosk mode</a>${agent ? `<a class="btn primary" href="#missing/new">${icon("plus")}Report missing</a>` : ""}` }) + `
     <div class="seg" style="margin-bottom:18px">${tabs.map(t => `<button data-board="${t}" class="${t === f ? "on" : ""}">${t}<span class="n">${profiles.filter(by[t]).length}</span></button>`).join("")}</div>
     <div class="board">${items.map(p => posterHTML(p, { actions: actions(p) })).join("")
@@ -1291,7 +1291,7 @@ VIEWS.sightings = async el => {
   const subjects = [["all", "All", null], ["profile", "Missing board", "eye"], ["character", "Unlisted", "gamepad"], ...(agent ? [["agent", "Agents", "badge"]] : [])];
   const profilesSeen = [...new Map(all.filter(s => s.profile_id).map(s => [s.profile_id, s.profile_name])).entries()];
   el.innerHTML = head(agent ? "Sightings" : "Sightings map",
-    agent ? "Reports of people on the missing board, unlisted characters and EXUN agents, each scored against its own profile."
+    agent ? "Reports of people on the missing board, unlisted characters and Sentinel agents, each scored against its own profile."
       : "Recent public reports. Reporter identities are never shown.",
     { eyebrow: agent ? "Field" : "", actions: `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>` }) + `
     <div class="grid g2">
@@ -1341,8 +1341,8 @@ const OTHER_COPY = {
     hint: "Describe how they looked and moved, and anything odd nearby (flickering lights, sparks, humming).",
   },
   agent: {
-    title: "An EXUN agent", desc: "Someone who is, or says they are, an agent",
-    placeholder: "e.g. Woman in a grey coat said she was with EXUN, showed a badge and asked whether the arcade machines had been acting strangely.",
+    title: "A Sentinel agent", desc: "Someone who is, or says they are, an agent",
+    placeholder: "e.g. Woman in a grey coat said she was with Sentinel, showed a badge and asked whether the arcade machines had been acting strangely.",
     hint: "If they gave a name or showed ID, include it. This helps us spot people impersonating agents.",
   },
 };
@@ -1353,7 +1353,7 @@ VIEWS.report = async (el, param) => {
   let choice = param && profiles.some(p => p.id === param) ? param : filters.reportChoice && (OTHER_COPY[filters.reportChoice] || profiles.some(p => p.id === filters.reportChoice)) ? filters.reportChoice : profiles[0]?.id || "character";
   const nowLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   el.innerHTML = head("Report a sighting",
-    "Seen someone from the missing board, another character who seems to have escaped a game, or an EXUN agent? Tell us what you saw.",
+    "Seen someone from the missing board, another character who seems to have escaped a game, or a Sentinel agent? Tell us what you saw.",
     { eyebrow: "Help the investigation" }) + `<div id="rwrap"><form id="sf" novalidate>
       <div class="card" style="margin-bottom:16px"><div class="card-head"><h2><span class="step-n">1</span>Who did you see?</h2><a class="btn sm ghost" href="#missing">View the full board${icon("arrow")}</a></div>
         <div class="choice-grid" role="radiogroup">
@@ -1402,7 +1402,7 @@ VIEWS.report = async (el, param) => {
     $("#mlabel", el).textContent = sub === "agent" ? "Details we look for" : p ? `Match with ${p.name}` : "Signs of an escaped character";
     const labels = p ? p.traits.map(t => t.label) : SUBJECTS[sub].traits.map(([t]) => t);
     $("#mchips", el).innerHTML = labels.map(t => `<span class="chip" data-t="${esc(t)}">${icon("check")}${esc(t)}</span>`).join("");
-    $("#privacy", el).innerHTML = sub === "agent" ? `${icon("shield")} Agent sightings are only visible to EXUN, never on the public map.` : "";
+    $("#privacy", el).innerHTML = sub === "agent" ? `${icon("shield")} Agent sightings are only visible to Sentinel agents, never on the public map.` : "";
     live();
   };
   const live = () => {
@@ -1450,8 +1450,8 @@ VIEWS.report = async (el, param) => {
       });
       const strong = s.match_level === "strong" || s.also_match;
       const msg = s.subject === "agent"
-        ? ["Agent report received", "EXUN Operations will review it. If this person isn't a real agent, we'll follow up.", "info", "Agent report"]
-        : strong ? ["Field agents have been alerted", `Your description closely matches ${esc(s.profile_name || s.also_match?.name || "a character EXUN is tracking")}. Thank you. Stay at a safe distance.`, "critical", `strong match · ${s.also_match?.score || s.match_score}`]
+        ? ["Agent report received", "Sentinel Operations will review it. If this person isn't a real agent, we'll follow up.", "info", "Agent report"]
+        : strong ? ["Field agents have been alerted", `Your description closely matches ${esc(s.profile_name || s.also_match?.name || "a character Sentinel is tracking")}. Thank you. Stay at a safe distance.`, "critical", `strong match · ${s.also_match?.score || s.match_score}`]
         : s.match_level === "possible" ? ["An analyst will review your report", "It partially matches. Thank you for reporting.", "medium", `possible match · ${s.match_score}`]
         : ["Report logged", "Thank you. Every report helps, even when it doesn't match.", "low", `low match · ${s.match_score}`];
       $("#rwrap", el).innerHTML = `<div class="card receipt">
@@ -1556,7 +1556,7 @@ VIEWS.agents = async el => {
   const me = agents.find(a => a.username === S.user.username);
   let pick = me ? { x: me.x, y: me.y } : null;
   const tone = s => (/backup/i.test(s) ? "critical" : /relocat|off/i.test(s) ? "medium" : "good");
-  el.innerHTML = head("Agent tracker", "Last known positions and status of EXUN personnel. Check in to update your own, or message a teammate directly.",
+  el.innerHTML = head("Agent tracker", "Last known positions and status of Sentinel personnel. Check in to update your own, or message a teammate directly.",
     { eyebrow: "Field", actions: `<a class="btn" href="#comms/field">${icon("hash")}field-ops</a>` }) + `
     <div class="grid g-side">
       <div class="card"><div id="amap"></div><div class="legend"><span><i class="sw dia" style="background:var(--accent)"></i>Agent position</span>${me ? `<span class="muted">Tap the map to set your check-in location</span>` : ""}</div></div>

@@ -20,8 +20,8 @@ const handle = createApi({
     get: async key => { try { return JSON.parse(await readFile(join(DATA, key + ".json"), "utf8")); } catch { return null; } },
     set: (key, value) => writeFile(join(DATA, key + ".json"), JSON.stringify(value)),
   },
-  secret: process.env.EXUN_SECRET || undefined,
-  agencyCode: process.env.EXUN_AGENCY_CODE || undefined,
+  secret: process.env.SENTINEL_SECRET || undefined,
+  agencyCode: process.env.SENTINEL_AGENCY_CODE || undefined,
 });
 
 createServer(async (req, res) => {

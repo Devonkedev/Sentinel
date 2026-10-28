@@ -52,9 +52,9 @@ export const CHARACTER_TRAITS = [
   ["Unreal colours or outline", 8, /neon|glow|outline|cel[- ]shad|cartoon|bright(ly)? colou?r/],
 ];
 
-// Reports of an EXUN agent, or someone claiming to be one
+// Reports of a Sentinel agent, or someone claiming to be one
 export const AGENT_TRAITS = [
-  ["Claimed to be an agent", 20, /exun|\bagent\b|etinuxe|intelligence agency|government|official/],
+  ["Claimed to be an agent", 20, /sentinel|\bagent\b|etinuxe|intelligence agency|government|official/],
   ["Showed a badge or ID", 15, /badge|id card|\bid\b|credentials|identification/],
   ["Asked about the arcade or machine", 15, /arcade|wenoti|reckoning|machine|cabinet/],
   ["Asked about POI-1", 15, /cosplay|armou?r|pointed ears|poi[- ]?1|knight/],
@@ -65,7 +65,7 @@ export const AGENT_TRAITS = [
 export const SUBJECTS = {
   poi1: { label: "POI-1", traits: POI_TRAITS },
   character: { label: "Video game character", traits: CHARACTER_TRAITS },
-  agent: { label: "EXUN agent", traits: AGENT_TRAITS },
+  agent: { label: "Sentinel agent", traits: AGENT_TRAITS },
 };
 
 function score(traitList, description) {

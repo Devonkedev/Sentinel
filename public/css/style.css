@@ -607,3 +607,5 @@ svg.map .pulse { animation: pulse 2s ease-out infinite; transform-origin: center
 .kiosk-stage .poster-main { grid-template-columns: minmax(0, 34%) minmax(0, 1fr); }
 @media (max-width: 960px) { .theme-fab { position: absolute; } .hero-body > .row:first-child { padding-right: 0; } .hero .brand { padding-right: 52px; } .hero-body .badge + .btn { margin-right: -6px; } }
 @media (max-width: 960px) { .hero-body > .row:first-child .btn { display: none; } }
+
+.brand-mark .mark { width: 24px; height: 24px; }

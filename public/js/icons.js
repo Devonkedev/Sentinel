@@ -43,3 +43,9 @@ const P = {
   siren: '<path d="M7 18v-6a5 5 0 1 1 10 0v6"/><path d="M5 21a1 1 0 0 1-1-1v-1a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1a1 1 0 0 1-1 1z"/><path d="M21 12h1M18.5 4.5 18 5M2 12h1M12 2v1M4.93 4.93l.71.71"/>',
 };
 export const icon = (name, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name] || ""}</svg>`;
+
+// Sentinel mark: a watchful eye with a pixel pupil inside a reticle. Inherits colours from CSS.
+export const mark = (size = 22) => `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 64 64" aria-hidden="true">
+  <g fill="currentColor"><rect x="30" y="4" width="4" height="9"/><rect x="30" y="51" width="4" height="9"/><rect x="1" y="30" width="6" height="4"/><rect x="57" y="30" width="6" height="4"/></g>
+  <path d="M10 32 Q32 12 54 32 Q32 52 10 32 Z" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="round"/>
+  <rect x="25" y="25" width="14" height="14" fill="currentColor"/><rect x="32" y="25" width="7" height="7" fill="#c0281c"/></svg>`;
