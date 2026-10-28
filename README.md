@@ -1,5 +1,3 @@
-# Sentinel
-
 <img src="public/brand/logo.svg" alt="Sentinel" width="320">
 
 Public missing board and agent case console, built around the Wenoti Arcade case (The Reckoning V: Origins, machine `MJWHKZLTNBUXE5A`).
@@ -7,40 +5,6 @@ Public missing board and agent case console, built around the Wenoti Arcade case
 - **Frontend:** static HTML/CSS/JS in `public/` (no build step)
 - **Backend:** one Netlify Function (`netlify/functions/api.js`) serving `/api/*`
 - **Storage:** Netlify Blobs (no database to set up)
-
-## Deploy to Netlify
-
-**Option A: Git (recommended)**
-1. Push this folder to a GitHub/GitLab repo.
-2. In Netlify: **Add new site → Import an existing project** → pick the repo.
-   The settings are read from `netlify.toml`, so leave build command and publish directory as they are.
-3. **Site configuration → Environment variables**, add:
-   - `SENTINEL_SECRET`: a long random string that signs login sessions (**required**; otherwise a public default is used)
-   - `SENTINEL_AGENCY_CODE`: optional, the code needed to register as an agent (default `SENTINEL-2026`)
-4. Deploy. The first request seeds the demo accounts and case data into Blobs.
-
-**Option B: CLI**
-```
-npm install
-npx netlify login
-npx netlify init          # create/link a site
-npx netlify env:set SENTINEL_SECRET "$(openssl rand -hex 32)"
-npx netlify deploy --prod
-```
-
-Netlify Drop (drag and drop) won't work, because it doesn't build functions.
-
-## Run locally
-
-Needs Node 20+.
-
-```
-node dev.js                # http://localhost:8888, data stored in ./data
-# or, to emulate Netlify exactly:
-npx netlify dev
-```
-
-Delete `./data` to reset the local case state.
 
 ## Demo accounts
 
