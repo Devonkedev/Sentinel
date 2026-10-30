@@ -44,4 +44,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404); res.end("Not found");
   }
-}).listen(PORT, () => console.log(`Sentinel on http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Sentinel on http://localhost:${PORT}  (agent conis/conis2026, citizen citizen/citizen2026)`));

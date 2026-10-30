@@ -1,16 +1,23 @@
 <img src="public/brand/logo.svg" alt="Sentinel" width="320">
 
-Public missing board and agent case console. It starts empty: every poster, report, alert and verdict comes from what people actually file.
+Public missing board and agent case console.
 
 - **Frontend:** static HTML/CSS/JS in `public/` (no build step)
 - **Backend:** one Netlify Function (`netlify/functions/api.js`) serving `/api/*`
 - **Storage:** Netlify Blobs (no database to set up)
 
-## First run
+## Demo accounts
 
-There are no preset accounts. Create an agent account (agency code from `SENTINEL_AGENCY_CODE`; if that isn't set, the code `SENTINEL-2026` is shown on the sign-up form), publish a poster on the missing board, then create a citizen account in a second browser and report a sighting. The agent's console updates within about 8 seconds.
+An empty store fills itself on first use with demo accounts, three missing posters, London sightings, alerts and chat. Times are relative to that first request. Energy, code and integrity evidence is left for you to run live, using the load buttons or your own files.
 
-The energy dossier, code samples and sample photos in the case files only load when someone presses their load button.
+| Role    | Username | Password    |
+|---------|----------|-------------|
+| Agent   | conis    | conis2026   |
+| Agent   | mega     | mega2026    |
+| Agent   | nano     | nano2026    |
+| Citizen | citizen  | citizen2026 |
+
+These passwords are public, so don't put real data on a deployment with demo accounts. To register another agent, use the code from `SENTINEL_AGENCY_CODE` (`SENTINEL-2026` if unset, shown on the sign-up form).
 
 ## Map and data sources
 
@@ -24,7 +31,7 @@ Nothing on the site is cached: pages and API responses are sent with `Cache-Cont
 |---|---|---|
 | Missing board | Everyone | Agents publish "missing" posters for any character or person, with a description, photo, public guidance (harmless / caution / do not approach), last-seen location and a **"what to look for"** trait list (each trait has keywords and an importance). Citizens browse the board; agents can mark people found or archive them. |
 | Slideshow and kiosk | Everyone | Published posters rotate on the landing page. `#kiosk` is a full-screen display for public screens outside stations and arcades, like wanted posters. |
-| Public appeal + sign-in | Everyone | Landing page with the slideshow, live counts and sign-in. |
+| Public appeal + sign-in | Everyone | Landing page with the slideshow, live counts and one-click demo logins. |
 | Report a sighting | Citizens | Pick someone from the board (scored live against that poster's traits), **someone not on the board** (checked against every poster, with a "this sounds like…" suggestion), or an **Sentinel agent**. Search for a place, use your location or click the map. Strong matches alert field agents. Reporter identity is hidden from other citizens. |
 | Sightings map | Everyone | Map plus a feed filterable by subject and match level. Agents verify or dismiss reports. Verifying a sighting moves the poster's last-seen location. |
 | Agent sightings | Agents | Never shown publicly. If the reporter names an agent who isn't on the roster, a "possible impersonation" alert is raised. Agents can link reports to an agent profile, and the tracker shows each agent's public sightings. |
@@ -45,6 +52,7 @@ public/            static site (index.html, css/, js/, samples/)
   js/map.js        real map, place search and location picker
   js/poi.js        Sighting scorers, shared by browser and API
 lib/api.js         API routes, auth (PBKDF2 + HMAC-signed tokens), alert routing
+lib/seed.js        demo content for an empty store
 lib/engines.js     energy, code-forensics and correlation engines
 netlify/functions/api.js   Netlify Function entry (Blobs storage)
 dev.js             zero-dependency local server (file storage)

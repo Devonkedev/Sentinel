@@ -559,7 +559,7 @@ tr.flag td { background: var(--critical-soft); }
 .pin-tag { display: inline-flex; align-items: center; gap: 4px; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--warning); }
 .pin-tag svg { width: 12px; height: 12px; }
 .mention { background: var(--accent-soft); color: var(--accent); border-radius: 2px; padding: 0 3px; font-weight: 600; }
-.mention.me { background: var(--warning-soft); color: var(--warning); }
+.mention.me { display: inline; padding: 0 3px; background: var(--warning-soft); color: var(--warning); }
 .ref-card { display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; padding: 7px 11px; border: 1.5px solid var(--ink); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font: 500 12.5px var(--mono); text-decoration: none !important; max-width: 100%; box-shadow: 2px 2px 0 var(--ink); }
 .ref-card span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ref-card svg:first-child { color: var(--critical); }

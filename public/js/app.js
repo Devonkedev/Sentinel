@@ -236,6 +236,10 @@ async function renderLanding(mode = "login", role = "citizen") {
         <div class="error" id="autherr"></div>
         <button class="btn primary block" style="margin-top:18px;height:40px">${mode === "login" ? "Sign in" : "Create account"}${icon("arrow")}</button>
       </form>
+      <div class="demo"><div class="small muted">Demo accounts, one click</div><div class="demo-grid">
+        ${[["conis", "Conis Nikrobo", "Agent · case lead"], ["mega", "Agent Mega", "Agent · field"], ["citizen", "Demo Citizen", "Citizen"]].map(([u, n, r]) =>
+          `<button class="demo-btn" data-demo="${u}"><span class="avatar">${initials(n)}</span><span class="who"><div>${n}</div><div>${r}</div></span>${icon("arrow")}</button>`).join("")}
+      </div><div class="hint" style="margin-top:10px">Passwords are the username plus 2026, e.g. <span class="mono">conis2026</span>.</div></div>
     </div></section>
     <div class="theme-fab">${themeBtn("btn icon")}</div>
   </div>`;
@@ -246,6 +250,7 @@ async function renderLanding(mode = "login", role = "citizen") {
     const f = $("#authf"), keep = { name: f.name?.value, username: f.username.value };
     renderLanding("register", b.dataset.r).then(() => { Object.entries(keep).forEach(([k, v]) => { if ($("#authf")[k]) $("#authf")[k].value = v || ""; }); });
   }));
+  $$("[data-demo]").forEach(b => (b.onclick = () => busy(b, () => signIn("/api/login", { username: b.dataset.demo, password: b.dataset.demo + "2026" }))));
   $("#authf").onsubmit = e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));

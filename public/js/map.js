@@ -59,7 +59,7 @@ export function createMap(host, { onClick, height = 420 } = {}) {
         if (popup) m.bindPopup(popup(s));
         m.addTo(pins);
       }
-      points = points.concat(next.map(s => [s.lat, s.lng]));
+      points = points.concat(next.filter(s => s.status !== "dismissed").map(s => [s.lat, s.lng]));
       frame();
     },
     setAgents(agents) {
