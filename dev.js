@@ -1,5 +1,5 @@
 // Local development server: node dev.js  ->  http://localhost:8888
-// Serves public/ and runs the same API as the Netlify function, storing data in ./data.
+// Serves public/ and runs the same API as the Netlify function, storing data in ./data/live.
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
@@ -11,7 +11,7 @@ const PORT = Number(process.env.PORT || 8888);
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 const PUBLIC = fileURLToPath(new URL("./public/", import.meta.url));
-const DATA = fileURLToPath(new URL("./data/", import.meta.url));
+const DATA = fileURLToPath(new URL("./data/live/", import.meta.url));
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".txt": "text/plain", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
 
 await mkdir(DATA, { recursive: true });
@@ -39,9 +39,9 @@ createServer(async (req, res) => {
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   try {
     const content = await readFile(file);
-    res.writeHead(200, { "Content-Type": TYPES[extname(file)] || "application/octet-stream" });
+    res.writeHead(200, { "Content-Type": TYPES[extname(file)] || "application/octet-stream", "Cache-Control": "no-store" });
     res.end(content);
   } catch {
     res.writeHead(404); res.end("Not found");
   }
-}).listen(PORT, () => console.log(`Sentinel on http://localhost:${PORT}  (agent conis/conis2026, citizen citizen/citizen2026)`));
+}).listen(PORT, () => console.log(`Sentinel on http://localhost:${PORT}`));

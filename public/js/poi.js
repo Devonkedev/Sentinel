@@ -1,44 +1,10 @@
-// POI-1 profile matcher. Shared by the API (scoring) and the browser (live preview).
+// Sighting scoring. Shared by the API and the browser (live preview).
 
-export const PLACES = {
-  "Wenoti Arcade, 92nd Ave": [63, 38],
-  "etiNuxe Intelligence Agency HQ": [24, 22],
-  "Department of Electricity": [57, 66],
-  "Central Station": [48, 48],
-  "Riverside Market": [78, 66],
-  "Old Town Square": [20, 60],
-  "92nd Ave Substation": [70, 30],
+const distanceKm = (a, b) => {
+  const r = d => (d * Math.PI) / 180;
+  const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lng - a.lng) / 2) ** 2;
+  return 12742 * Math.asin(Math.sqrt(h));
 };
-
-export const POI_TRAITS = [
-  ["Pointed / sharp ears", 20, /\b(pointy|pointed|sharp|elf(in|ish)?|long)\b[\w\s,]{0,20}\bears?\b|\bears?\b[\w\s]{0,12}\b(pointy|pointed|sharp)\b|\belf/],
-  ["Armour", 18, /armou?r|chain ?mail|breastplate|plate mail|knight/],
-  ["Embellished / bedazzled outfit", 4, /bedazzl|sparkl|jewel|gems?\b|glitter|shiny/],
-  ["Scabbard or sword", 15, /scabbard|sheath|sword|blade|sabre|saber/],
-  ["Leather gloves / gauntlets", 9, /gloves?|gauntlets?/],
-  ["Boots", 7, /\bboots?\b/],
-  ["Thick or unusual accent", 9, /accent|archaic|old[- ]fashioned (speech|english)|strange(ly)? (way of )?(speak|talk)/],
-  ["Nervous behaviour", 6, /stutter|nervous|flinch|jumpy|hurried|ran off|fled|panick/],
-  ["Unfamiliar with modern life", 7, /bare wrist|no watch|wrist|confused by|didn.?t know (what|how)|never seen a/],
-  ["Around arcade machines / electronics", 5, /arcade|game machine|cabinet|screen|electronic|spark|flicker|warbl|reverberat|power (cut|surge)/],
-];
-
-export function matchPoi(description, x, y) {
-  const text = String(description || "").toLowerCase();
-  const traits = [];
-  let score = 0;
-  for (const [label, weight, re] of POI_TRAITS) {
-    if (re.test(text)) { traits.push(label); score += weight; }
-  }
-  const [ax, ay] = PLACES["Wenoti Arcade, 92nd Ave"];
-  if (x != null && y != null && Math.hypot(x - ax, y - ay) < 15) {
-    score += 5;
-    traits.push("Near Wenoti Arcade");
-  }
-  score = Math.min(score, 100);
-  const level = score >= 60 ? "strong" : score >= 35 ? "possible" : "low";
-  return { score, level, traits };
-}
 
 // Any video game character that seems to have left its game
 export const CHARACTER_TRAITS = [
@@ -54,16 +20,15 @@ export const CHARACTER_TRAITS = [
 
 // Reports of a Sentinel agent, or someone claiming to be one
 export const AGENT_TRAITS = [
-  ["Claimed to be an agent", 20, /sentinel|\bagent\b|etinuxe|intelligence agency|government|official/],
+  ["Claimed to be an agent", 20, /sentinel|\bagent\b|intelligence agency|government|official/],
   ["Showed a badge or ID", 15, /badge|id card|\bid\b|credentials|identification/],
-  ["Asked about the arcade or machine", 15, /arcade|wenoti|reckoning|machine|cabinet/],
-  ["Asked about POI-1", 15, /cosplay|armou?r|pointed ears|poi[- ]?1|knight/],
+  ["Asked about the arcade or machine", 15, /arcade|machine|cabinet/],
+  ["Asked about a missing character", 15, /missing|character|cosplay|poster|wanted/],
   ["Surveillance behaviour", 15, /watching|taking notes|photograph|camera|earpiece|following|undercover|staking/],
-  ["Gave a name or codename", 10, /\bnano\b|\bmega\b|conis|nikrobo|name was|called (him|her|them)sel(f|ves)|codename/],
+  ["Gave a name or codename", 10, /name was|called (him|her|them)sel(f|ves)|codename/],
 ];
 
 export const SUBJECTS = {
-  poi1: { label: "POI-1", traits: POI_TRAITS },
   character: { label: "Video game character", traits: CHARACTER_TRAITS },
   agent: { label: "Sentinel agent", traits: AGENT_TRAITS },
 };
@@ -80,13 +45,10 @@ function score(traitList, description) {
 
 // Scores a sighting against the profile for its subject.
 // Agent sightings get level "agent": they are logged for review, not ranked.
-export function scoreSighting(subject, description, x, y) {
+export function scoreSighting(subject, description) {
   if (subject === "agent") return { ...score(AGENT_TRAITS, description), level: "agent" };
-  if (subject === "character") {
-    const s = score(CHARACTER_TRAITS, description);
-    return { ...s, level: s.score >= 50 ? "strong" : s.score >= 25 ? "possible" : "low" };
-  }
-  return matchPoi(description, x, y);
+  const s = score(CHARACTER_TRAITS, description);
+  return { ...s, level: s.score >= 50 ? "strong" : s.score >= 25 ? "possible" : "low" };
 }
 
 // ---------------------------------------------------------------- missing-board profiles
@@ -98,7 +60,7 @@ const kwRegex = k => {
   return kwCache.get(k);
 };
 
-export function matchProfile(profile, description, x, y) {
+export function matchProfile(profile, description, lat, lng) {
   const text = String(description || "").toLowerCase();
   const traits = [];
   let got = 0, total = 0;
@@ -109,7 +71,7 @@ export function matchProfile(profile, description, x, y) {
   }
   let score = total ? Math.round((100 * got) / total) : 0;
   const ls = profile.last_seen;
-  if (ls && ls.x != null && x != null && y != null && Math.hypot(x - ls.x, y - ls.y) < 15) {
+  if (ls && ls.lat != null && lat != null && lng != null && distanceKm(ls, { lat, lng }) < 2) {
     score += 5;
     traits.push("Near last known location");
   }
@@ -118,10 +80,10 @@ export function matchProfile(profile, description, x, y) {
 }
 
 // Best-matching profile for a description, for reports of someone "not on the board"
-export function bestProfile(profiles, description, x, y) {
+export function bestProfile(profiles, description, lat, lng) {
   let best = null;
   for (const p of profiles) {
-    const m = matchProfile(p, description, x, y);
+    const m = matchProfile(p, description, lat, lng);
     if (!best || m.score > best.score) best = { id: p.id, name: p.name, ...m };
   }
   return best;

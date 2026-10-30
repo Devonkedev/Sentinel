@@ -1,10 +1,11 @@
 // Sentinel frontend (vanilla ES modules, no build step)
 import { icon, mark } from "./icons.js";
-import { PLACES, SUBJECTS, scoreSighting, matchProfile, bestProfile } from "./poi.js";
+import { SUBJECTS, scoreSighting, matchProfile, bestProfile } from "./poi.js";
 import CV from "./cv.js";
+import { createMap, locationPicker, destroyMaps } from "./map.js";
 
+// Optional inputs from the case files. Nothing here loads until someone asks for it.
 const CASE = {
-  machineId: "MJWHKZLTNBUXE5A",
   energy: [
     ["2026-10-13", 18477.2, 24.6], ["2026-10-14", 18505.3, 28.1], ["2026-10-15", 18528.2, 22.9],
     ["2026-10-16", 18559.6, 31.4], ["2026-10-17", 18586.3, 26.7], ["2026-10-18", 18621.5, 35.2],
@@ -49,7 +50,7 @@ const initials = name => name.replace(/^Agent\s+/, "").split(/\s+/).map(w => w[0
 const SEV = { critical: "var(--critical)", high: "var(--serious)", medium: "var(--warning)", low: "var(--ink-3)", none: "var(--ink-3)", good: "var(--good)" };
 const pill = (level, text) => `<span class="pill ${esc(level)}">${esc(text ?? level)}</span>`;
 const levelSev = l => (l === "strong" ? "critical" : l === "possible" ? "medium" : l === "agent" ? "info" : "low");
-const subjectOf = s => (!s.subject || s.subject === "poi1" ? "profile" : s.subject);
+const subjectOf = s => s.subject;
 const SUBJECT_UI = {
   profile: { icon: "target", label: "On the missing board", tag: "Missing board" },
   character: { icon: "gamepad", label: "Not on the board", tag: "Unlisted" },
@@ -67,6 +68,7 @@ const dmId = (a, b) => "dm-" + [a, b].sort().join("-");
 
 async function api(path, body) {
   const res = await fetch(path, {
+    cache: "no-store",
     method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json", ...(S.token ? { Authorization: "Bearer " + S.token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -129,74 +131,16 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-discuss]");
   if (!b) return;
   S.pendingRef = JSON.parse(b.dataset.discuss);
-  location.hash = "comms/" + (b.dataset.conv || "wenoti");
+  location.hash = "comms/" + (b.dataset.conv || "case");
 });
-const discussBtn = (ref, conv = "wenoti") => `<button class="btn sm ghost" data-discuss='${esc(JSON.stringify(ref))}' data-conv="${conv}">${icon("message")}Discuss</button>`;
+const discussBtn = (ref, conv = "case") => `<button class="btn sm ghost" data-discuss='${esc(JSON.stringify(ref))}' data-conv="${conv}">${icon("message")}Discuss</button>`;
 
 document.addEventListener("click", e => {
   if (e.target.closest("[data-theme-toggle]")) setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 });
 
 // ================================================================ map
-const DISTRICTS = [
-  ["Civic Quarter", 4, 4, 40, 30], ["Arcade District", 50, 4, 46, 30], ["Old Town", 4, 40, 40, 36],
-  ["Central", 50, 40, 46, 7], ["Utilities", 50, 56, 15, 20], ["Riverside", 70, 56, 26, 20],
-];
-
-const SHORT = { "etiNuxe Intelligence Agency HQ": "EIA HQ", "Department of Electricity": "Electricity Dept.", "92nd Ave Substation": "Substation", "Riverside Market": "Market" };
-
-function mapSVG({ sightings = [], agents = [], pick = null, id = "map" }) {
-  const places = Object.entries(PLACES).map(([name, [x, y]]) =>
-    `<g><rect x="${x - 1}" y="${y - 1}" width="2" height="2" rx=".4" style="fill:var(--map-place)" opacity=".6"/>
-      <text x="${name.startsWith("Wenoti") ? x + 2.6 : x}" y="${name.startsWith("Wenoti") ? y - 1.4 : y + 3.6}" font-size="2.1" text-anchor="${name.startsWith("Wenoti") ? "start" : "middle"}" style="fill:var(--map-place)">${esc(SHORT[name] || name.split(",")[0])}</text><title>${esc(name)}</title></g>`).join("");
-  const color = { strong: "var(--critical)", possible: "var(--warning)", low: "var(--ink-3)" };
-  const recent = s => Date.now() - (toDate(s.seen_at) || 0) < 72 * 3600e3;
-  color.agent = "var(--change)";
-  const shape = s => {
-    const c = `class="pin" data-id="${s.id}" style="fill:${color[s.match_level] || color.low};stroke:var(--map-bg)" stroke-width=".6" opacity="${s.status === "dismissed" ? .35 : 1}"`;
-    const t = `<title>${esc(subjectTag(s))} · ${esc(s.location)} · ${when(s.seen_at)}</title>`;
-    if (subjectOf(s) === "character") return `<rect ${c} x="${s.x - 1.7}" y="${s.y - 1.7}" width="3.4" height="3.4" rx=".5">${t}</rect>`;
-    if (subjectOf(s) === "agent") return `<path ${c} d="M${s.x} ${s.y - 2.1} L${s.x + 2} ${s.y + 1.6} L${s.x - 2} ${s.y + 1.6} Z">${t}</path>`;
-    return `<circle ${c} cx="${s.x}" cy="${s.y}" r="1.8">${t}</circle>`;
-  };
-  const pins = sightings.filter(s => s.x != null).map(s => `<g>
-    ${s.match_level === "strong" && s.status !== "dismissed" && recent(s) ? `<circle class="pulse" cx="${s.x}" cy="${s.y}" r="1.8" style="fill:${color.strong}"/>` : ""}
-    ${shape(s)}</g>`).join("");
-  const seen = {};
-  const ags = agents.map(a0 => {
-    const k = a0.x + "," + a0.y, n = (seen[k] = (seen[k] || 0) + 1) - 1;
-    const x = a0.x - 3 - n * 6, y = a0.y - 3.6;
-    return `<g><path d="M${x} ${y - 2.2} L${x + 2} ${y} L${x} ${y + 2.2} L${x - 2} ${y} Z" style="fill:var(--accent);stroke:var(--map-bg)" stroke-width=".6"><title>${esc(a0.name)} · ${esc(a0.status)}</title></path>
-      <text x="${x}" y="${y - 3}" font-size="2.1" font-weight="600" text-anchor="middle" style="fill:var(--accent)">${esc(a0.name.replace("Agent ", "").split(" ")[0])}</text></g>`;
-  }).join("");
-  const picked = pick ? `<g><circle cx="${pick.x}" cy="${pick.y}" r="3" fill="none" style="stroke:var(--accent)" stroke-width=".7"/><circle cx="${pick.x}" cy="${pick.y}" r="1" style="fill:var(--accent)"/></g>` : "";
-  return `<svg class="map ${pick !== null ? "pick" : ""}" id="${id}" viewBox="0 0 100 80" role="img" aria-label="Map of nuxEland">
-    ${DISTRICTS.map(([n, x, y, w, h]) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.2" style="fill:var(--map-district);stroke:var(--map-district-line)" stroke-width=".35"/>
-      <text x="${x + 1.6}" y="${y + 3.6}" font-size="2.1" font-weight="700" letter-spacing=".15" style="fill:var(--map-label)">${n.toUpperCase()}</text>`).join("")}
-    <path d="M0 50 C 20 46, 30 54, 48 52 S 70 44, 100 49" fill="none" style="stroke:var(--map-river)" stroke-width="2.6"/>
-    <path d="M0 37 H100 M47 0 V80 M67.5 53 V80" style="stroke:var(--map-road)" stroke-width="1.4"/>
-    <text x="5" y="38.6" font-size="1.9" font-style="italic" style="fill:var(--map-label)">92nd Avenue →</text>
-    ${places}${ags}${pins}${picked}</svg>`;
-}
-
-function bindPicker(svg, onPick) {
-  svg.addEventListener("click", e => {
-    if (e.target.closest(".pin")) return;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    onPick(Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10);
-  });
-}
-
-function nearestPlace(x, y) {
-  let best = null, bd = Infinity;
-  for (const [name, [px, py]] of Object.entries(PLACES)) {
-    const d = Math.hypot(px - x, py - y);
-    if (d < bd) { bd = d; best = name; }
-  }
-  return bd < 6 ? best : `Near ${best.split(",")[0]}`;
-}
+const sightingPopup = s => `<b>${esc(s.profile_name || s.character_name || s.agent_name || "Unidentified")}</b><br>${esc(s.location)}<br><span class="muted">${esc(when(s.seen_at))} · ${esc(s.match_level)} match</span>`;
 
 const mapLegend = (agents = false, subjects = false) => `<div class="legend">
   <span><i class="sw" style="background:var(--critical)"></i>Strong match</span>
@@ -267,7 +211,7 @@ async function renderLanding(mode = "login", role = "citizen") {
         <div class="row between" style="margin-bottom:6px"><span class="badge"><span class="live"></span>Public notice</span>
           <a class="btn sm ghost" href="#kiosk">${icon("layers")}Kiosk mode</a></div>
         <h1>Have you seen them?</h1>
-        <p class="lead">Video game characters have been disappearing from arcades. Sentinel is asking the public to look out for the characters below. If you see one, don't approach. Report it.</p>
+        <p class="lead">Video game characters have been leaving their machines. Sentinel is asking the public to look out for the characters below. If you see one, don't approach. Report it.</p>
         <div id="lshow"></div>
         <div class="row" style="margin-top:20px"><button class="btn primary" id="cta" style="height:42px">${icon("eye")}Report a sighting</button>
           <div class="hero-stats" id="hstats"></div></div>
@@ -288,14 +232,10 @@ async function renderLanding(mode = "login", role = "citizen") {
         <div class="field"><label for="f-user">Username</label><input id="f-user" name="username" autocomplete="username" autocapitalize="off" required></div>
         <div class="field"><label for="f-pass">Password</label><input id="f-pass" name="password" type="password" autocomplete="${mode === "login" ? "current-password" : "new-password"}" required>
           ${mode === "register" ? `<div class="hint">At least 6 characters.</div>` : ""}</div>
-        ${mode === "register" && role === "agent" ? `<div class="field"><label for="f-code">Agency authorisation code</label><input id="f-code" name="agency_code" autocomplete="off"></div>` : ""}
+        ${mode === "register" && role === "agent" ? `<div class="field"><label for="f-code">Agency authorisation code</label><input id="f-code" name="agency_code" autocomplete="off"><div class="hint" id="codehint"></div></div>` : ""}
         <div class="error" id="autherr"></div>
         <button class="btn primary block" style="margin-top:18px;height:40px">${mode === "login" ? "Sign in" : "Create account"}${icon("arrow")}</button>
       </form>
-      <div class="demo"><div class="small muted">Demo accounts, one click</div><div class="demo-grid">
-        ${[["conis:conis2026", "Conis Nikrobo", "Agent · case lead"], ["mega:mega2026", "Agent Mega", "Agent · field"], ["citizen:citizen2026", "Demo Citizen", "Citizen"]].map(([c, n, r]) =>
-          `<button class="demo-btn" data-demo="${c}"><span class="avatar">${initials(n)}</span><span class="who"><div>${n}</div><div>${r}</div></span>${icon("arrow")}</button>`).join("")}
-      </div><div class="hint" style="margin-top:10px">Agent sign-up code for the demo: <span class="mono">SENTINEL-2026</span></div></div>
     </div></section>
     <div class="theme-fab">${themeBtn("btn icon")}</div>
   </div>`;
@@ -306,7 +246,6 @@ async function renderLanding(mode = "login", role = "citizen") {
     const f = $("#authf"), keep = { name: f.name?.value, username: f.username.value };
     renderLanding("register", b.dataset.r).then(() => { Object.entries(keep).forEach(([k, v]) => { if ($("#authf")[k]) $("#authf")[k].value = v || ""; }); });
   }));
-  $$("[data-demo]").forEach(b => (b.onclick = () => busy(b, () => signIn("/api/login", Object.fromEntries([["username", b.dataset.demo.split(":")[0]], ["password", b.dataset.demo.split(":")[1]]])))));
   $("#authf").onsubmit = e => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
@@ -319,14 +258,23 @@ async function renderLanding(mode = "login", role = "citizen") {
   };
 
   S.slideStop?.();
-  loadProfiles().then(ps => {
-    const live = ps.filter(p => p.status === "missing");
-    if ($("#lshow")) S.slideStop = slideshow($("#lshow"), live, { size: "md", actions: p => `<button class="btn primary sm" data-seen="${p.id}">${icon("eye")}I've seen them</button>` });
+  let shown = null;
+  const drawBoard = async () => {
+    const live = (await loadProfiles()).filter(p => p.status === "missing");
+    const key = JSON.stringify(live);
+    if (key === shown || !$("#lshow")) return;
+    shown = key;
+    S.slideStop?.();
+    S.slideStop = slideshow($("#lshow"), live, { size: "md", actions: p => `<button class="btn primary sm" data-seen="${p.id}">${icon("eye")}I've seen them</button>` });
     $$("[data-seen]").forEach(b => (b.onclick = () => { filters.reportChoice = b.dataset.seen; $("#cta").click(); }));
-  });
+  };
+  clearInterval(S.viewTimer);
+  drawBoard();
+  S.viewTimer = setInterval(() => drawBoard().catch(() => {}), LIVE_MS);
   try {
     const s = await api("/api/public/summary");
     $("#hstats").innerHTML = `<div><div class="v">${s.missing ?? "—"}</div><div class="k">On the board</div></div><div><div class="v">${s.sightings}</div><div class="k">Reports filed</div></div>`;
+    if (s.demo_code && $("#codehint")) $("#codehint").innerHTML = `Demo code: <span class="mono">${esc(s.demo_code)}</span>`;
   } catch { /* stats are optional */ }
 }
 
@@ -342,6 +290,7 @@ async function signIn(path, body) {
 function signOut() {
   S.token = null; S.user = null; S.alerts = []; S.comms = null;
   clearInterval(S.viewTimer);
+  destroyMaps();
   S.slideStop?.();
   store.set("sentinel_token", null);
   clearInterval(S.poll);
@@ -440,6 +389,7 @@ async function navigate() {
   if (!allowed.includes(id)) id = allowed[0];
   S.route = id;
   clearInterval(S.viewTimer);
+  destroyMaps();
   $$("[data-route]").forEach(a => (a.getAttribute("data-route") === id ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
   $("#shell")?.classList.remove("open");
   document.title = `${ROUTES[id].title} · Sentinel`;
@@ -460,6 +410,17 @@ async function navigate() {
 }
 // Re-render the current view in place (after an action)
 const rerender = () => navigate();
+// Picks up what other people file while a read-only view is open
+const LIVE_MS = 8000;
+function watchView(load) {
+  let last = null;
+  S.viewTimer = setInterval(async () => {
+    let now;
+    try { now = JSON.stringify(await load()); } catch { return; }
+    if (last !== null && now !== last && !document.querySelector("#main input:focus, #main textarea:focus, #main select:focus")) rerender();
+    last = now;
+  }, LIVE_MS);
+}
 window.addEventListener("hashchange", navigate);
 
 async function boot() {
@@ -470,7 +431,7 @@ async function boot() {
   renderShell();
   await Promise.all([refreshAlerts(false), refreshComms(false)]);
   clearInterval(S.poll);
-  if (S.user.role === "agent") S.poll = setInterval(() => { refreshAlerts(true); refreshComms(true); }, 20000);
+  if (S.user.role === "agent") S.poll = setInterval(() => { refreshAlerts(true); refreshComms(true); }, LIVE_MS);
   navigate();
 }
 
@@ -479,11 +440,11 @@ const VIEWS = {};
 
 VIEWS.dashboard = async el => {
   const [c, sightings, agents, integrity, energy, code, wenoti] = await Promise.all(
-    ["/api/correlate", "/api/sightings", "/api/agents", "/api/integrity", "/api/energy", "/api/code", "/api/comms/wenoti"].map(p => api(p)));
+    ["/api/correlate", "/api/sightings", "/api/agents", "/api/integrity", "/api/energy", "/api/code", "/api/comms/case"].map(p => api(p)));
   await refreshAlerts(false);
   const color = c.score >= 70 ? "var(--critical)" : c.score >= 40 ? "var(--warning)" : "var(--good)";
   const open = S.alerts.filter(a => a.status === "open");
-  const strong = sightings.filter(s => s.status !== "dismissed" && ((s.profile_id === "poi-1" && s.match_level === "strong") || s.also_match?.id === "poi-1"));
+  const strong = sightings.filter(s => s.status !== "dismissed" && ((s.profile_id && s.match_level === "strong") || s.also_match));
   const board = await api("/api/profiles");
   const chars = sightings.filter(s => subjectOf(s) === "character" && s.status !== "dismissed");
   const escalated = S.alerts.some(a => a.source === "Correlation engine");
@@ -497,11 +458,10 @@ VIEWS.dashboard = async el => {
   const doneCount = steps.filter(s => s[2]).length;
   const tlColor = { Energy: "var(--critical)", Code: "var(--serious)", Sighting: "var(--accent)", Integrity: "var(--warning)" };
   el.innerHTML = `
-    <div class="banner">${icon("alert")}<div><b>Notice EIA/SNT/SUS-01</b> · effective 27 Oct 2026. Sentinel's operational authority is suspended pending administrative review. Case records remain accessible.</div></div>
-    ${head("Wenoti Arcade", `The Reckoning V: Origins · machine <span class="mono">${CASE.machineId}</span> · 92nd Avenue, nuxEland`, { eyebrow: "Active case" })}
+    ${head("Case overview", "Everything agents have filed so far, weighed together. Add evidence below and the verdict recalculates.", { eyebrow: "Active case" })}
     <div class="grid g4">
       ${[["bell", "Open alerts", open.length, `${open.filter(a => a.severity === "critical").length} critical`, "#alerts"],
-         ["eye", "On the missing board", board.filter(p => p.published && p.status === "missing").length, `${strong.length} strong POI-1 sighting${strong.length === 1 ? "" : "s"} · ${chars.length} unlisted`, "#missing"],
+         ["eye", "On the missing board", board.filter(p => p.published && p.status === "missing").length, `${strong.length} strong sighting${strong.length === 1 ? "" : "s"} · ${chars.length} unlisted`, "#missing"],
          ["users", "Agents in the field", `${agents.filter(a => !/relocat|off/i.test(a.status)).length}<span class="muted" style="font-size:18px">/${agents.length}</span>`, `${agents.filter(a => /relocat/i.test(a.status)).length} relocation pending`, "#agents"],
          ["scan", "Latest inspection", integrity[0] ? integrity[0].score : "—", integrity[0] ? `${integrity[0].condition} surface damage` : "No inspection yet", "#integrity"]]
         .map(([ic, k, v, d, href]) => `<a class="card stat" href="${href}" style="color:inherit;text-decoration:none"><div class="k">${icon(ic)}${k}</div><div class="v">${v}</div><div class="d">${d}</div></a>`).join("")}
@@ -525,8 +485,8 @@ VIEWS.dashboard = async el => {
       </div>
     </div>
     <div class="grid g2" style="margin-top:16px">
-      <div class="card"><div class="card-head"><h2>${icon("pin")}Live map</h2><a class="btn sm ghost" href="#sightings">Open sightings${icon("arrow")}</a></div>
-        ${mapSVG({ sightings, agents })}${mapLegend(true)}</div>
+      <div class="card"><div class="card-head"><h2>${icon("pin")}Live map <span class="live-tag"><span class="live"></span>Live</span></h2><a class="btn sm ghost" href="#sightings">Open sightings${icon("arrow")}</a></div>
+        <div id="dmap"></div>${mapLegend(true)}</div>
       <div class="card"><div class="card-head"><h2>${icon("clock")}Event timeline</h2></div>
         ${c.timeline.length ? `<div class="timeline">${c.timeline.map(t => `<div class="tl" style="--tl:${tlColor[t.source] || "var(--accent)"}"><div class="t">${when(t.time)} · ${esc(t.source)}</div><div class="x">${esc(t.text)}</div></div>`).join("")}</div>`
           : empty("clock", "No events yet", "Run the energy and code analyses to build the timeline.")}
@@ -535,11 +495,11 @@ VIEWS.dashboard = async el => {
     <div class="grid g-side" style="margin-top:16px">
       <div class="card"><div class="card-head"><h2>${icon("bell")}Open alerts</h2><a class="btn sm ghost" href="#alerts">View all${icon("arrow")}</a></div>
         <div class="list">${open.slice(0, 3).map(alertItem).join("") || empty("checkCircle", "All clear", "No open alerts right now.")}</div></div>
-      <div class="card"><div class="card-head"><div><h2>${icon("message")}#wenoti-case</h2><div class="sub">Latest from the case channel</div></div><a class="btn sm ghost" href="#comms/wenoti">Open${icon("arrow")}</a></div>
+      <div class="card"><div class="card-head"><div><h2>${icon("message")}#case-room</h2><div class="sub">Latest from the case channel</div></div><a class="btn sm ghost" href="#comms/case">Open${icon("arrow")}</a></div>
         <div class="mini-msgs">${wenoti.messages.slice(-4).map(m => `<div class="mini-msg ${m.urgent ? "urgent" : ""}"><span class="avatar sm">${initials(m.from_name)}</span>
           <div><div class="small"><b>${esc(m.from_name)}</b> <span class="muted">${ago(m.time)}</span></div><div class="ink2 small">${renderText(m.text)}</div></div></div>`).join("")
           || empty("message", "No messages yet", "Start the conversation in Comms.")}</div>
-        <a class="btn block" href="#comms/wenoti" style="margin-top:12px">${icon("message")}Reply in Comms</a></div>
+        <a class="btn block" href="#comms/case" style="margin-top:12px">${icon("message")}Reply in Comms</a></div>
     </div>`;
 
   const doEscalate = async btn => {
@@ -554,6 +514,10 @@ VIEWS.dashboard = async el => {
       rerender();
     });
   };
+  const dmap = createMap($("#dmap", el), { height: 340 });
+  dmap.setPins(sightings, sightingPopup);
+  dmap.setAgents(agents);
+  watchView(() => Promise.all(["/api/correlate", "/api/sightings", "/api/agents"].map(p => api(p))));
   $("#escalate", el).onclick = e => doEscalate(e.currentTarget);
   $("[data-esc]", el).onclick = e => { e.preventDefault(); if (c.score >= 40) doEscalate($("#escalate")); else toast("Not enough evidence to escalate yet", { type: "info" }); };
   bindAlertButtons(el);
@@ -567,7 +531,7 @@ function alertItem(a) {
     <div class="tags" style="margin-top:10px">${(a.recipients || []).map(r => `<span class="tag">${icon("send")}${esc(r)}</span>`).join("")}</div>
     <div class="actions">${a.status === "open" ? `<button class="btn sm" data-ack="${a.id}">${icon("check")}Acknowledge</button>` : ""}
       ${a.status !== "resolved" ? `<button class="btn sm ghost" data-res="${a.id}">Resolve</button>` : ""}
-      ${discussBtn({ type: "alert", id: a.id, label: a.title }, a.source === "Sightings" ? "sightings" : a.source === "Comms" ? "field" : "wenoti")}</div></div>`;
+      ${discussBtn({ type: "alert", id: a.id, label: a.title }, a.source === "Sightings" ? "sightings" : a.source === "Comms" ? "field" : "case")}</div></div>`;
 }
 
 function bindAlertButtons(root) {
@@ -596,7 +560,7 @@ VIEWS.alerts = async el => {
          ["Energy spike HVAC can't explain", "critical", "Sentinel Ops, Dept. of Electricity"],
          ["Reported usage ≠ meter register", "high", "Dept. of Electricity"],
          ["Case verdict ≥ 70, escalated", "critical", "EIA Command, Sentinel Ops, Defence Liaison, Dept. of Electricity"],
-         ["Strong POI-1 sighting (≥ 60)", "high", "Sentinel Field Agents, Sentinel Ops"],
+         ["Strong missing-board sighting (≥ 60)", "high", "Sentinel Field Agents, Sentinel Ops"],
          ["Agent requests backup", "critical", "Sentinel Field Agents, Sentinel Ops"],
          ["Severe surface damage", "high", "Sentinel Ops, Facility Owner, Vendor"],
          ["Spike consistent with HVAC", "low", "Facility Owner"]].map(r => `<tr><td>${r[0]}</td><td>${pill(r[1])}</td><td class="small ink2">${r[2]}</td></tr>`).join("")}
@@ -642,7 +606,7 @@ VIEWS.comms = async (el, param) => {
   updateBadge();
   const convs = () => [...S.comms.channels, ...S.comms.dms];
   if (param && !convs().some(c => c.id === param)) { toast("Conversation not found", { type: "err" }); param = null; }
-  const st = { id: param || "wenoti", messages: [], last: null, sending: false };
+  const st = { id: param || "case", messages: [], last: null, sending: false };
   el.classList.add("comms-page");
 
   el.innerHTML = head("Comms", "Coordinate with other agents. Share evidence, mention teammates with @username, and flag anything urgent.", { eyebrow: "Command" }) + `
@@ -827,8 +791,8 @@ VIEWS.energy = async el => {
     "Recomputes daily usage from the meter register, finds outliers with a robust z-score, flags reported figures that disagree with the meter, and tests whether an HVAC startup could explain each spike.",
     { eyebrow: "Forensics" }) + `
     <div class="grid g-side">
-      <div class="card"><div class="card-head"><div><h2>${icon("file")}Meter readings</h2><div class="sub">Department of Electricity dossier · Wenoti Arcade</div></div>
-        <div class="row"><button class="btn sm ghost" id="loadcase">${icon("refresh")}Reset to dossier</button><button class="btn sm ghost" id="pastecsv">Paste CSV</button></div></div>
+      <div class="card"><div class="card-head"><div><h2>${icon("file")}Meter readings</h2><div class="sub">Enter readings, paste a CSV or load the case dossier</div></div>
+        <div class="row"><button class="btn sm ghost" id="loadcase">${icon("refresh")}Load case dossier</button><button class="btn sm ghost" id="pastecsv">Paste CSV</button></div></div>
         <div id="csvbox" class="hidden" style="margin-bottom:12px"><textarea id="csv" class="code" style="min-height:110px" placeholder="date,meter,usage&#10;2026-10-13,18477.2,24.6"></textarea>
           <div class="row" style="margin-top:8px"><button class="btn sm primary" id="csvok">Import rows</button><button class="btn sm ghost" id="csvx">Cancel</button></div></div>
         <div class="table-wrap" style="max-height:360px;overflow:auto"><table class="edit-table"><thead><tr><th>Date</th><th class="num">Meter (kWh)</th><th class="num">Reported daily (kWh)</th><th></th></tr></thead><tbody id="etb"></tbody></table></div>
@@ -839,8 +803,8 @@ VIEWS.energy = async el => {
           <div class="field" style="margin:0"><label for="hkw">Compressor rating (kW)</label><input id="hkw" type="number" value="15" min="0" step="1"></div>
           <div class="field" style="margin:0"><label for="hh">Hours at full load</label><input id="hh" type="number" value="24" min="0" max="24" step="1"></div></div>
         <div class="hint">Defaults are generous: a large commercial unit running all day.</div>
-        <label class="check"><input type="checkbox" id="harm" checked><span>Elevated harmonic content recorded<div class="hint" style="margin:0">Points to switching electronics rather than motors</div></span></label>
-        <label class="check"><input type="checkbox" id="phase" checked><span>Phase imbalance recorded<div class="hint" style="margin:0">No single phase accounts for the excursion</div></span></label>
+        <label class="check"><input type="checkbox" id="harm"><span>Elevated harmonic content recorded<div class="hint" style="margin:0">Points to switching electronics rather than motors</div></span></label>
+        <label class="check"><input type="checkbox" id="phase"><span>Phase imbalance recorded<div class="hint" style="margin:0">No single phase accounts for the excursion</div></span></label>
         <button class="btn primary block" id="run" style="margin-top:20px;height:40px">${icon("activity")}Analyse readings</button>
       </div>
     </div>
@@ -859,7 +823,7 @@ VIEWS.energy = async el => {
     tbody.appendChild(tr);
   };
   const loadCase = () => { tbody.innerHTML = ""; CASE.energy.forEach(r => addRow(...r)); };
-  loadCase();
+  for (let i = 0; i < 3; i++) addRow();
   $("#loadcase", el).onclick = loadCase;
   $("#addrow", el).onclick = () => addRow();
   $("#pastecsv", el).onclick = () => { $("#csvbox", el).classList.remove("hidden"); $("#csv", el).focus(); };
@@ -920,9 +884,9 @@ VIEWS.code = async el => {
     "Structurally compares a known-good build with the build recovered from the machine: classes, methods, dangling references and orphaned dependencies. Severity decides who gets alerted.",
     { eyebrow: "Forensics" }) + `
     <div class="card"><div class="grid g3" style="gap:12px">
-      <div class="field" style="margin:0"><label for="mid">Machine ID</label><input id="mid" value="${CASE.machineId}" class="mono"></div>
-      <div class="field" style="margin:0"><label for="cb">Baseline captured</label><input id="cb" type="date" value="2026-10-01"></div>
-      <div class="field" style="margin:0"><label for="ca">Recovered build captured</label><input id="ca" type="date" value="2026-10-24"></div></div>
+      <div class="field" style="margin:0"><label for="mid">Machine ID</label><input id="mid" placeholder="${CASE.machineId}" class="mono"></div>
+      <div class="field" style="margin:0"><label for="cb">Baseline captured</label><input id="cb" type="date"></div>
+      <div class="field" style="margin:0"><label for="ca">Recovered build captured</label><input id="ca" type="date"></div></div>
       <div class="grid g2" style="margin-top:16px">
         ${[["orig", "Known-good source", "fo"], ["alt", "Recovered source", "fa"]].map(([id, label, fid]) => `<div class="editor" id="ed-${id}">
           <div class="meta"><span class="label" style="margin:0">${label} <span class="muted" id="lc-${id}"></span></span>
@@ -940,7 +904,7 @@ VIEWS.code = async el => {
 
   const count = id => { const v = $("#" + id, el).value; $("#lc-" + id, el).textContent = v ? `· ${v.split("\n").length} lines` : ""; };
   const load = async () => {
-    const [o, a] = await Promise.all(["samples/OriginalCode.txt", "samples/AlteredCode.txt"].map(p => fetch(p).then(r => r.text())));
+    const [o, a] = await Promise.all(["samples/OriginalCode.txt", "samples/AlteredCode.txt"].map(p => fetch(p, { cache: "no-store" }).then(r => r.text())));
     $("#orig", el).value = o; $("#alt", el).value = a; count("orig"); count("alt");
   };
   for (const [fid, id] of [["fo", "orig"], ["fa", "alt"]]) {
@@ -963,7 +927,6 @@ VIEWS.code = async el => {
     refreshAlerts(false);
     $("#cresult").scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  await load();
   if (history[0]) showCode($("#cresult", el), history[0]);
 };
 
@@ -1080,7 +1043,7 @@ async function renderKiosk() {
   document.title = "Missing · Sentinel";
   const profiles = (await loadProfiles()).filter(p => p.status === "missing");
   $("#app").innerHTML = `<div class="kiosk">
-    <header class="kiosk-top"><div class="brand"><span class="brand-mark">${mark()}</span><span><div class="brand-name">Sentinel</div><div class="brand-sub">Public notice · etiNuxe Intelligence Agency</div></span></div>
+    <header class="kiosk-top"><div class="brand"><span class="brand-mark">${mark()}</span><span><div class="brand-name">Sentinel</div><div class="brand-sub">Public notice</div></span></div>
       <div class="kiosk-clock mono" id="kclock"></div><a class="btn" href="#">${icon("x")}Exit</a></header>
     <div class="kiosk-stage" id="kshow"></div>
     <footer class="kiosk-foot"><span><b>Seen someone on this board?</b> Do not approach. Report it at <span class="mono">${esc(location.host || "sentinel")}</span></span>
@@ -1088,7 +1051,11 @@ async function renderKiosk() {
   </div>`;
   const tick = () => { const c = $("#kclock"); if (c) c.textContent = new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }); };
   tick();
-  S.viewTimer = setInterval(tick, 15000);
+  const shown = JSON.stringify(profiles);
+  S.viewTimer = setInterval(async () => {
+    tick();
+    if (JSON.stringify((await loadProfiles()).filter(p => p.status === "missing")) !== shown) renderKiosk();
+  }, LIVE_MS);
   S.slideStop = slideshow($("#kshow"), profiles, { interval: 9000, size: "lg" });
 }
 
@@ -1151,7 +1118,7 @@ async function profileEditor(el, id) {
         <div class="card-head"><h2>${icon("file")}Profile</h2></div>
         <div class="grid g2" style="gap:12px">
           <div class="field" style="margin:0"><label for="p-name">Name *</label><input id="p-name" name="name" required value="${esc(p.name)}"></div>
-          <div class="field" style="margin:0"><label for="p-alias">Alias or codename</label><input id="p-alias" name="alias" value="${esc(p.alias || "")}" placeholder="e.g. POI-1"></div>
+          <div class="field" style="margin:0"><label for="p-alias">Alias or codename</label><input id="p-alias" name="alias" value="${esc(p.alias || "")}" placeholder="e.g. The Neon Duelist"></div>
           <div class="field" style="margin:0"><label for="p-kind">This is a</label><select id="p-kind" name="kind">${Object.entries({ character: "Video game character", person: "Person", unknown: "Unknown" }).map(([k, v]) => `<option value="${k}" ${p.kind === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
           <div class="field" style="margin:0"><label for="p-origin">Game or origin</label><input id="p-origin" name="origin" value="${esc(p.origin || "")}" placeholder="e.g. Skyline Sprint"></div>
           <div class="field" style="margin:0"><label for="p-danger">Public guidance</label><select id="p-danger" name="danger">${Object.entries(DANGER).map(([k, [, v]]) => `<option value="${k}" ${p.danger === k ? "selected" : ""}>${v}</option>`).join("")}</select></div>
@@ -1162,9 +1129,10 @@ async function profileEditor(el, id) {
           <div class="row"><label class="btn sm" for="p-img">${icon("upload")}Upload image</label><input type="file" id="p-img" class="sr" accept="image/*">
             <button type="button" class="btn sm ghost" id="p-imgx" ${p.image ? "" : "hidden"}>Remove image</button><span class="hint" style="margin:0">Without one, a silhouette is shown.</span></div></div>
         <div class="grid g2" style="gap:12px">
-          <div class="field"><label for="p-ls">Last seen</label><input id="p-ls" name="ls_location" list="p-places" value="${esc(p.last_seen?.location || "")}" placeholder="Place, or e.g. Reported abroad"><datalist id="p-places">${Object.keys(PLACES).map(x => `<option value="${esc(x)}">`).join("")}</datalist></div>
+          <div class="field"><label for="p-ls">Last seen</label><input id="p-ls" name="ls_location" value="${esc(p.last_seen?.location || "")}" placeholder="Pick on the map below, or type e.g. Reported abroad"></div>
           <div class="field"><label for="p-lst">When</label><input id="p-lst" name="ls_time" type="datetime-local" value="${esc(p.last_seen?.time || "")}"></div>
         </div>
+        <div id="p-lsmap"></div>
         <div class="card-head" style="margin-top:22px"><div><h2>${icon("target")}What to look for</h2><div class="sub">Each trait matches when a report mentions any of its keywords. Key traits count three times as much as supporting ones.</div></div></div>
         <div id="traits" class="traits"></div>
         <button type="button" class="btn sm ghost" id="addtrait">${icon("plus")}Add trait</button>
@@ -1191,9 +1159,10 @@ async function profileEditor(el, id) {
       <select data-k="weight" aria-label="Importance">${WEIGHTS.map(([w, l]) => `<option value="${w}" ${+t.weight === w ? "selected" : ""}>${l}</option>`).join("")}</select>
       <button type="button" class="btn ghost icon sm" data-rm="${i}" aria-label="Remove trait">${icon("x")}</button></div>`).join("");
   };
+  let lsPos = p.last_seen?.lat != null ? p.last_seen : null;
   const read = () => {
     const fd = new FormData(f);
-    const loc = String(fd.get("ls_location") || "").trim(), coords = PLACES[loc];
+    const loc = String(fd.get("ls_location") || "").trim();
     p.traits = $$(".trait-row", traitsEl).map(r => ({
       label: $("[data-k=label]", r).value.trim(), weight: +$("[data-k=weight]", r).value,
       keywords: $("[data-k=keywords]", r).value.split(",").map(k => k.trim().toLowerCase()).filter(Boolean),
@@ -1201,7 +1170,7 @@ async function profileEditor(el, id) {
     Object.assign(p, {
       name: fd.get("name").trim(), alias: fd.get("alias").trim(), kind: fd.get("kind"), origin: fd.get("origin").trim(), danger: fd.get("danger"),
       case_ref: fd.get("case_ref").trim(), description: fd.get("description").trim(), published: fd.get("published") === "on",
-      last_seen: loc ? { location: loc, x: coords ? coords[0] : null, y: coords ? coords[1] : null, time: fd.get("ls_time") || null } : null,
+      last_seen: loc ? { location: loc, lat: lsPos?.lat ?? null, lng: lsPos?.lng ?? null, time: fd.get("ls_time") || null } : null,
     });
   };
   const preview = () => {
@@ -1218,6 +1187,7 @@ async function profileEditor(el, id) {
     $("#tchips", el).innerHTML = p.traits.filter(t => t.label).map(t => `<span class="chip ${m.traits.includes(t.label) ? "on" : ""}">${icon("check")}${esc(t.label)}</span>`).join("");
   };
   drawTraits();
+  locationPicker($("#p-lsmap", el), { initial: lsPos, height: 240, label: "Search for the last known location", onChange: pos => { lsPos = pos; $("#p-ls", el).value = pos.location; preview(); } });
   preview();
   f.oninput = preview;
   f.onchange = preview;
@@ -1295,7 +1265,7 @@ VIEWS.sightings = async el => {
       : "Recent public reports. Reporter identities are never shown.",
     { eyebrow: agent ? "Field" : "", actions: `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>` }) + `
     <div class="grid g2">
-      <div><div class="card" style="position:sticky;top:20px">${mapSVG({ sightings: items })}${mapLegend(false, true)}
+      <div><div class="card" style="position:sticky;top:20px"><div id="smap"></div>${mapLegend(false, true)}
         <div class="label" style="margin-top:18px">How reports are scored</div>
         <div class="small ink2">Reports about someone on the <a href="#missing">missing board</a> are scored against that poster's “what to look for” list. Unlisted reports are checked against every poster, and against general signs of an escaped character.</div>
         ${agent ? `<div class="hint" style="margin-top:8px">Agent sightings are visible to agents and the reporter only.</div>` : ""}</div></div>
@@ -1306,6 +1276,8 @@ VIEWS.sightings = async el => {
           ${subj !== "agent" ? `<div class="seg">${["all", "strong", "possible", "low"].map(l => `<button data-f="${l}" class="${l === lvl ? "on" : ""}">${l}<span class="n">${n(bySubj, s => l === "all" || s.match_level === l)}</span></button>`).join("")}</div>` : ""}</div>
         <div class="list">${items.map(s => sightingItem(s, agent, agents)).join("") || `<div class="card">${empty("eye", "No sightings", "Nothing matches this filter yet.", `<a class="btn primary" href="#report">${icon("plus")}Report a sighting</a>`)}</div>`}</div></div>
     </div>`;
+  createMap($("#smap", el), { height: 440 }).setPins(items, sightingPopup);
+  watchView(() => api("/api/sightings"));
   $$("[data-subj]", el).forEach(b => (b.onclick = () => { filters.subj = b.dataset.subj; filters.profile = ""; rerender(); }));
   $$("[data-f]", el).forEach(b => (b.onclick = () => { filters.sight = b.dataset.f; rerender(); }));
   const ps = $("#profsel", el);
@@ -1374,10 +1346,7 @@ VIEWS.report = async (el, param) => {
       </div>
       <div class="card"><div class="card-head"><h2><span class="step-n">3</span>Where and when?</h2></div>
         <div id="pickmap"></div>
-        <div class="grid g2" style="gap:12px;margin-top:12px">
-          <div class="field" style="margin:0"><label for="place">Location</label><select name="place" id="place"><option value="">Tap the map or choose…</option>${Object.keys(PLACES).map(x => `<option>${esc(x)}</option>`).join("")}</select></div>
-          <div class="field" style="margin:0"><label for="seen">Time</label><input type="datetime-local" id="seen" name="seen_at" value="${nowLocal}"></div></div>
-        <div class="hint" id="locmsg">No location selected yet.</div>
+        <div class="field"><label for="seen">Time</label><input type="datetime-local" id="seen" name="seen_at" value="${nowLocal}"></div>
         <label class="check"><input type="checkbox" name="anonymous"><span>Submit anonymously<div class="hint" style="margin:0">Agents won't see your name.</div></span></label>
         <div class="hint" id="privacy" style="margin-top:10px"></div>
         <div class="error" id="serr"></div>
@@ -1407,7 +1376,7 @@ VIEWS.report = async (el, param) => {
   };
   const live = () => {
     const p = profile(), sub = subject(), text = f.description.value;
-    const m = p ? matchProfile(p, text, pick?.x, pick?.y) : scoreSighting(sub, text, pick?.x, pick?.y);
+    const m = p ? matchProfile(p, text, pick?.lat, pick?.lng) : scoreSighting(sub, text);
     const pct = sub === "agent" ? (100 * m.traits.length) / SUBJECTS.agent.traits.length : m.score;
     $("#mscore", el).textContent = sub === "agent" ? `${m.traits.length}/${SUBJECTS.agent.traits.length}` : m.score;
     $("#mbar", el).style.width = pct + "%";
@@ -1419,34 +1388,26 @@ VIEWS.report = async (el, param) => {
       : m.level === "strong" ? "Strong match. Agents will be alerted as soon as you submit."
       : m.level === "possible" ? "Partial match. Any other details you remember help." : "Keep going: clothing, how they moved, what was happening around them.";
     // Someone "not on the board" may actually be on it
-    const best = sub === "character" && !blank ? bestProfile(profiles, text, pick?.x, pick?.y) : null;
+    const best = sub === "character" && !blank ? bestProfile(profiles, text, pick?.lat, pick?.lng) : null;
     $("#suggest", el).innerHTML = best && best.score >= 35 ? `<div class="banner" style="margin:14px 0 0">${icon("target")}<div style="flex:1">This sounds like <b>${esc(best.name)}</b> from the missing board (${best.score}% match).</div>
       <button type="button" class="btn sm" data-switch="${best.id}">Report as ${esc(best.name)}</button></div>` : "";
     const sw = $("[data-switch]", el);
     if (sw) sw.onclick = () => setChoice(sw.dataset.switch);
   };
-  const drawMap = () => {
-    $("#pickmap", el).innerHTML = mapSVG({ pick, id: "pm" });
-    bindPicker($("#pm", el), (x, y) => { pick = { x, y }; f.place.value = ""; $("#locmsg", el).textContent = nearestPlace(x, y); drawMap(); live(); });
-  };
   $$(".choice", el).forEach(c => (c.onclick = () => setChoice(c.dataset.choice)));
-  drawMap();
+  locationPicker($("#pickmap", el), { onChange: p => { pick = p; live(); } });
   setChoice(choice);
   f.description.oninput = live;
-  f.place.onchange = e => {
-    const pl = PLACES[e.target.value];
-    if (pl) { pick = { x: pl[0], y: pl[1] }; $("#locmsg", el).textContent = e.target.value; drawMap(); live(); }
-  };
   f.onsubmit = e => {
     e.preventDefault();
     $("#serr", el).textContent = "";
     if (f.description.value.trim().length < 10) { $("#serr", el).textContent = "Please describe what you saw (at least 10 characters)."; return f.description.focus(); }
-    if (!pick) { $("#serr", el).textContent = "Please choose a location on the map or from the list."; return; }
+    if (!pick) { $("#serr", el).textContent = "Please choose a location: search, use your location or click the map."; return; }
     return busy(e.submitter, async () => {
       const s = await api("/api/sightings", {
         subject: subject(), profile_id: profile()?.id, description: f.description.value, seen_at: f.seen_at.value, anonymous: f.anonymous.checked,
         character_name: f.character_name?.value, game: f.game?.value, agent_name: f.agent_name?.value,
-        location: f.place.value || nearestPlace(pick.x, pick.y), x: pick.x, y: pick.y,
+        location: pick.location, lat: pick.lat, lng: pick.lng,
       });
       const strong = s.match_level === "strong" || s.also_match;
       const msg = s.subject === "agent"
@@ -1487,7 +1448,7 @@ VIEWS.integrity = async el => {
           <div class="field"><span class="label">${t}</span><label class="drop" id="drop-${k}" for="file-${k}"><div class="ic">${icon("upload")}</div><div><b>Click to upload</b> or drag a photo here</div><div class="hint">${h}</div></label>
           <input type="file" id="file-${k}" class="sr" accept="image/*"></div>`).join("")}
         <div class="grid g2" style="gap:12px;margin-top:4px">
-          <div class="field"><label for="imid">Machine ID</label><input id="imid" class="mono" value="${CASE.machineId}"></div>
+          <div class="field"><label for="imid">Machine ID</label><input id="imid" class="mono" placeholder="${CASE.machineId}"></div>
           <div class="field"><label for="inotes">Notes</label><input id="inotes" placeholder="e.g. right-side casing"></div></div>
         <div class="row" style="margin-top:18px"><button class="btn primary" id="irun" disabled>${icon("scan")}Analyse</button><button class="btn" id="isave" disabled>${icon("send")}Submit report</button></div>
       </div>
@@ -1554,15 +1515,13 @@ VIEWS.agents = async el => {
   const [agents, sightings] = await Promise.all([api("/api/agents"), api("/api/sightings")]);
   const seenBy = id => sightings.filter(s => s.linked_agent === id);
   const me = agents.find(a => a.username === S.user.username);
-  let pick = me ? { x: me.x, y: me.y } : null;
   const tone = s => (/backup/i.test(s) ? "critical" : /relocat|off/i.test(s) ? "medium" : "good");
   el.innerHTML = head("Agent tracker", "Last known positions and status of Sentinel personnel. Check in to update your own, or message a teammate directly.",
     { eyebrow: "Field", actions: `<a class="btn" href="#comms/field">${icon("hash")}field-ops</a>` }) + `
     <div class="grid g-side">
-      <div class="card"><div id="amap"></div><div class="legend"><span><i class="sw dia" style="background:var(--accent)"></i>Agent position</span>${me ? `<span class="muted">Tap the map to set your check-in location</span>` : ""}</div></div>
-      <div class="card">${me ? `<div class="card-head"><div><h2>${icon("pin")}Check in</h2><div class="sub">${esc(me.name)} · last ${ago(me.last_checkin)}</div></div></div><form id="cf">
-        <div class="field" style="margin-top:0"><label for="cplace">Location</label><select name="place" id="cplace"><option value="">Tap the map or choose…</option>${Object.keys(PLACES).map(p => `<option ${p === me.location ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
-          <div class="hint" id="cmsg">${esc(me.location)}</div></div>
+      <div class="card"><div id="amap"></div><div class="legend"><span><i class="sw dia" style="background:var(--accent)"></i>Agent position</span></div></div>
+      <div class="card">${me ? `<div class="card-head"><div><h2>${icon("pin")}Check in</h2><div class="sub">${esc(me.name)} · ${me.last_checkin ? "last " + ago(me.last_checkin) : "not checked in yet"}</div></div></div><form id="cf">
+        <div class="field" style="margin-top:0"><span class="label">Location</span><div class="hint" id="cmsg" style="margin-top:0">${esc(me.location || "Choose it on the map")}</div></div>
         <div class="field"><label for="cstat">Status</label><select name="status" id="cstat">${["Active - Surveillance", "Active - Case lead", "Active - Interview", "Off duty", "Relocation pending", "Needs backup"].map(s => `<option ${s === me.status ? "selected" : ""}>${s}</option>`).join("")}</select>
           <div class="hint">"Needs backup" alerts every field agent immediately.</div></div>
         <div class="field"><label for="cnote">Note</label><input name="note" id="cnote" placeholder="Optional"></div>
@@ -1572,25 +1531,24 @@ VIEWS.agents = async el => {
     <div class="card" style="margin-top:16px"><div class="card-head"><h2>${icon("users")}Personnel</h2><span class="muted small">${agents.length} agents</span></div><div class="table-wrap"><table>
       <tr><th>Agent</th><th>Status</th><th>Last location</th><th>Last check-in</th><th>Public sightings</th><th>Assignment</th><th></th></tr>
       ${agents.map(a => `<tr class="${tone(a.status) === "critical" ? "flag" : ""}"><td><div class="row" style="gap:10px;flex-wrap:nowrap"><span class="avatar">${initials(a.name)}</span><div><div style="font-weight:600">${esc(a.name)}${a.username === S.user.username ? ' <span class="muted small">(you)</span>' : ""}</div><div class="small muted mono">${esc(a.id)} · ${esc(a.rank)}</div></div></div></td>
-        <td>${pill(tone(a.status), a.status)}</td><td>${esc(a.location)}</td><td title="${esc(when(a.last_checkin))}">${ago(a.last_checkin)}</td>
+        <td>${pill(tone(a.status), a.status)}</td><td>${a.location ? esc(a.location) : `<span class="muted">Not checked in</span>`}</td><td title="${a.last_checkin ? esc(when(a.last_checkin)) : ""}">${a.last_checkin ? ago(a.last_checkin) : "—"}</td>
         <td>${seenBy(a.id).length ? `<a href="#sightings" data-seen="${seenBy(a.id)[0].id}">${seenBy(a.id).length} · ${esc(seenBy(a.id)[0].location.split(",")[0])}</a><div class="hint">${ago(seenBy(a.id)[0].seen_at)}</div>` : `<span class="muted">—</span>`}</td>
         <td class="small ink2">${esc(a.assignment)}
         ${a.trail.length ? `<div class="hint">Trail: ${a.trail.slice(0, 3).map(t => esc(t.location.split(",")[0])).join(" ← ")}</div>` : ""}</td>
         <td>${a.username !== S.user.username ? `<a class="btn sm" href="#comms/${dmId(S.user.username, a.username)}">${icon("message")}Message</a>` : ""}</td></tr>`).join("")}
     </table></div></div>`;
   $$("[data-seen]", el).forEach(a => (a.onclick = () => { S.flash = a.dataset.seen; filters.subj = "agent"; }));
-  const draw = () => {
-    $("#amap", el).innerHTML = mapSVG({ agents, pick: me ? pick : null, id: "am" });
-    if (me) bindPicker($("#am", el), (x, y) => { pick = { x, y }; $("#cplace", el).value = ""; $("#cmsg", el).textContent = nearestPlace(x, y); draw(); });
-  };
-  draw();
+  const picker = me ? locationPicker($("#amap", el), { initial: me, height: 380, onChange: p => { $("#cmsg", el).textContent = p.location; } }) : null;
+  const overview = picker ? picker.map : createMap($("#amap", el), { height: 380 });
+  overview.setAgents(agents.filter(a => a.username !== me?.username));
+  S.viewTimer = setInterval(async () => { try { overview.setAgents((await api("/api/agents")).filter(a => a.username !== me?.username)); } catch { /* next tick */ } }, LIVE_MS);
   if (!me) return;
-  $("#cplace", el).onchange = e => { const p = PLACES[e.target.value]; if (p) { pick = { x: p[0], y: p[1] }; $("#cmsg", el).textContent = e.target.value; draw(); } };
   $("#cf", el).onsubmit = e => {
     e.preventDefault();
     const f = e.target;
+    if (!picker.value()) return toast("Choose a location first", { type: "err", sub: "Search, use your location or click the map." });
     return busy(e.submitter, async () => {
-      const r = await api("/api/agents/checkin", { location: f.place.value || nearestPlace(pick.x, pick.y), x: pick.x, y: pick.y, status: f.status.value, note: f.note.value });
+      const r = await api("/api/agents/checkin", { ...picker.value(), status: f.status.value, note: f.note.value });
       toast(/backup/i.test(r.status) ? "Backup requested. All field agents alerted." : "Checked in", { type: /backup/i.test(r.status) ? "err" : "ok", sub: r.location });
       refreshAlerts(false);
       rerender();

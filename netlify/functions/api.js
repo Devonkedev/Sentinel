@@ -6,7 +6,7 @@ if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
 // The Blobs token is issued per invocation and expires, so the store is
 // opened on every call rather than cached on a warm instance.
-const blobs = () => getStore({ name: "sentinel", consistency: "strong" });
+const blobs = () => getStore({ name: "sentinel-live", consistency: "strong" });
 
 const handle = createApi({
   store: {
